@@ -1,0 +1,713 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>티켓팅</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700&display=swap" rel="stylesheet">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Noto Sans KR', 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; background: #efefef; color: #222; font-size: 13px; }
+
+    #header { background: #dfdfdf; border-bottom: 2px solid #aaa; padding: 5px 10px; display: flex; align-items: center; gap: 12px; }
+    #header h1 { font-size: 15px; font-weight: bold; }
+    #header nav { display: flex; gap: 6px; }
+    #header nav a { color: #00c; text-decoration: none; cursor: pointer; font-size: 13px; }
+    #header nav a:hover { text-decoration: underline; }
+    #header-right { margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 12px; }
+
+    .btn { background: #ddd; border: 1px solid #999; padding: 2px 8px; font-size: 12px; cursor: pointer; font-family: inherit; }
+    .btn:hover { background: #ccc; }
+    .btn-primary { background: #779; color: #fff; border-color: #446; }
+    .btn-primary:hover { background: #668; }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn-danger { background: #c66; color: #fff; border-color: #944; }
+    .btn-success { background: #696; color: #fff; border-color: #464; }
+
+    .page { display: none; padding: 10px; max-width: 860px; margin: 0 auto; }
+    .page.active { display: block; }
+
+    .section-title { font-size: 13px; font-weight: bold; border-bottom: 2px solid #999; padding-bottom: 3px; margin-bottom: 8px; }
+
+    table.events, table.reservations { width: 100%; border-collapse: collapse; background: #fff; }
+    table.events th, table.reservations th { background: #ddd; border: 1px solid #aaa; padding: 3px 8px; text-align: left; font-size: 12px; }
+    table.events td, table.reservations td { border: 1px solid #ccc; padding: 3px 8px; font-size: 12px; }
+    table.events tr.clickable:hover td { background: #ddf; cursor: pointer; }
+    table.events tr.sold td { color: #999; }
+
+    .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 200; }
+    .modal-overlay.open { display: flex; }
+    .modal { background: #efefef; border: 2px solid #aaa; padding: 14px; max-width: 500px; width: 92%; position: relative; max-height: 90vh; overflow-y: auto; }
+    .modal h2 { font-size: 13px; font-weight: bold; border-bottom: 1px solid #aaa; padding-bottom: 5px; margin-bottom: 10px; }
+    .modal-close { position: absolute; top: 6px; right: 6px; background: #ddd; border: 1px solid #999; width: 18px; height: 18px; cursor: pointer; font-size: 11px; line-height: 18px; text-align: center; }
+
+    .seat-grid { display: flex; flex-direction: column; gap: 2px; align-items: center; margin: 6px 0; }
+    .seat-row { display: flex; gap: 2px; align-items: center; }
+    .seat-row-label { font-size: 10px; width: 14px; text-align: right; margin-right: 3px; color: #888; }
+    .seat { width: 22px; height: 22px; border: 1px solid #aaa; cursor: pointer; font-size: 8px; background: #e8e8e8; }
+    .seat.available { background: #e8e8e8; }
+    .seat.available:hover { background: #aac; color: #fff; }
+    .seat.selected { background: #779; color: #fff; border-color: #446; }
+    .seat.reserved { background: #ccc; color: #aaa; cursor: not-allowed; }
+    .stage { background: #ccc; border: 1px solid #aaa; text-align: center; padding: 3px; font-size: 11px; margin-bottom: 6px; letter-spacing: 3px; }
+    .seat-legend { display: flex; gap: 12px; font-size: 11px; margin-top: 5px; justify-content: center; color: #666; }
+    .legend-dot { display: inline-block; width: 11px; height: 11px; border: 1px solid #aaa; vertical-align: middle; margin-right: 2px; }
+
+    .form-group { margin-bottom: 8px; }
+    .form-group label { display: block; font-size: 12px; margin-bottom: 2px; }
+    .form-input { width: 100%; padding: 3px 6px; border: 1px solid #aaa; font-size: 13px; font-family: inherit; background: #fff; }
+    .form-input:focus { border-color: #779; outline: none; }
+    .form-input.error { border-color: #c33; }
+    .form-error { font-size: 11px; color: #c33; min-height: 14px; }
+    .auth-switch { font-size: 12px; margin-top: 8px; }
+    .auth-switch a { color: #00c; cursor: pointer; }
+    .verify-code-input { font-size: 24px; letter-spacing: 10px; text-align: center; width: 100%; }
+
+    .modal-info { background: #fff; border: 1px solid #ccc; padding: 6px 8px; margin-bottom: 8px; font-size: 12px; }
+    .modal-info div { display: flex; justify-content: space-between; padding: 2px 0; border-bottom: 1px dotted #ddd; }
+    .modal-info div:last-child { border-bottom: none; }
+    .modal-total { font-size: 13px; font-weight: bold; margin: 8px 0; }
+    .payment-choice { display: flex; gap: 8px; margin-top: 8px; }
+    .payment-choice .btn { flex: 1; padding: 8px; font-size: 13px; font-weight: bold; }
+
+    .toast { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%) translateY(80px); background: #fff; border: 2px solid #aaa; padding: 6px 14px; font-size: 12px; transition: transform 0.2s; z-index: 300; min-width: 220px; }
+    .toast.show { transform: translateX(-50%) translateY(0); }
+    .toast.error { border-color: #c33; }
+    .toast.success { border-color: #393; }
+
+    #user-area { display: flex; align-items: center; gap: 6px; }
+    #status-text { font-size: 11px; color: #666; }
+
+    @media (max-width: 600px) {
+      #header { flex-wrap: wrap; }
+      .page { padding: 6px; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="header">
+  <h1>[티켓팅]</h1>
+  <nav>
+    <a onclick="showPage('home')" id="nav-home">홈</a> |
+    <a onclick="showPage('my-reservations')" id="nav-my">내 예매</a>
+  </nav>
+  <div id="header-right">
+    <span id="status-text">확인 중…</span>
+    &nbsp;|&nbsp;
+    <span id="auth-area">
+      <button class="btn" onclick="handleLogin()">로그인</button>
+      <button class="btn" onclick="handleSignup()">회원가입</button>
+    </span>
+    <span id="user-area" style="display:none">
+      <span id="user-email"></span>
+      <button class="btn" onclick="handleLogout()">로그아웃</button>
+    </span>
+  </div>
+</div>
+
+<!-- 홈 -->
+<div class="page active" id="page-home">
+  <p style="font-size:11px;color:#666;margin-bottom:8px">※ 좌석 선택 후 결제까지 10분 이내에 완료해 주세요. 로그인 후 예매 가능합니다.</p>
+  <div class="section-title">공연/전시 목록 <span id="event-count" style="font-weight:normal;font-size:11px;color:#666"></span></div>
+  <table class="events">
+    <thead>
+      <tr>
+        <th>구분</th><th>제목</th><th>장소</th><th>날짜</th><th>잔여석</th><th>가격(원)</th><th>상태</th>
+      </tr>
+    </thead>
+    <tbody id="events-grid">
+      <tr><td colspan="7" style="text-align:center;padding:12px;color:#666">불러오는 중…</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<!-- 내 예매 -->
+<div class="page" id="page-my-reservations">
+  <div class="section-title">내 예매 내역 <span id="my-reserv-count" style="font-weight:normal;font-size:11px;color:#666"></span></div>
+  <div id="my-reserv-list">
+    <p style="color:#666;padding:12px">불러오는 중…</p>
+  </div>
+</div>
+
+<!-- 로그인 모달 -->
+<div class="modal-overlay" id="modal-login">
+  <div class="modal" style="max-width:340px">
+    <button class="modal-close" onclick="closeModal('modal-login')">✕</button>
+    <h2>로그인</h2>
+    <div class="form-group">
+      <label>이메일</label>
+      <input class="form-input" id="login-email" type="email" placeholder="example@email.com" autocomplete="email">
+      <div class="form-error" id="login-email-err"></div>
+    </div>
+    <div class="form-group">
+      <label>비밀번호</label>
+      <input class="form-input" id="login-pw" type="password" placeholder="비밀번호" autocomplete="current-password">
+      <div class="form-error" id="login-pw-err"></div>
+    </div>
+    <div class="form-error" id="login-global-err" style="margin-bottom:6px"></div>
+    <button class="btn btn-primary" id="btn-login-submit" style="width:100%;padding:5px" onclick="submitLogin()">로그인</button>
+    <div class="auth-switch">계정이 없으신가요? <a onclick="switchModal('modal-login','modal-signup')">회원가입</a></div>
+  </div>
+</div>
+
+<!-- 회원가입 모달 -->
+<div class="modal-overlay" id="modal-signup">
+  <div class="modal" style="max-width:340px">
+    <button class="modal-close" onclick="closeModal('modal-signup')">✕</button>
+    <h2>회원가입</h2>
+    <div class="form-group">
+      <label>이메일</label>
+      <input class="form-input" id="signup-email" type="email" placeholder="example@email.com" autocomplete="email">
+      <div class="form-error" id="signup-email-err"></div>
+    </div>
+    <div class="form-group">
+      <label>비밀번호 (영문+숫자 8자 이상)</label>
+      <input class="form-input" id="signup-pw" type="password" placeholder="비밀번호" autocomplete="new-password">
+      <div class="form-error" id="signup-pw-err"></div>
+    </div>
+    <div class="form-group">
+      <label>비밀번호 확인</label>
+      <input class="form-input" id="signup-pw2" type="password" placeholder="비밀번호 재입력" autocomplete="new-password">
+      <div class="form-error" id="signup-pw2-err"></div>
+    </div>
+    <div class="form-error" id="signup-global-err" style="margin-bottom:6px"></div>
+    <button class="btn btn-primary" id="btn-signup-submit" style="width:100%;padding:5px" onclick="submitSignup()">회원가입</button>
+    <div class="auth-switch">이미 계정이 있으신가요? <a onclick="switchModal('modal-signup','modal-login')">로그인</a></div>
+  </div>
+</div>
+
+
+<!-- 좌석 선택 모달 -->
+<div class="modal-overlay" id="modal-seats">
+  <div class="modal" style="max-width:520px">
+    <button class="modal-close" onclick="closeModal('modal-seats')">✕</button>
+    <h2 id="seat-modal-title">좌석 선택</h2>
+    <p style="font-size:11px;color:#666;margin-bottom:6px" id="seat-modal-sub"></p>
+    <div class="stage">─── STAGE ───</div>
+    <div class="seat-grid" id="seat-grid"></div>
+    <div class="seat-legend">
+      <span><span class="legend-dot" style="background:#e8e8e8"></span>예매가능</span>
+      <span><span class="legend-dot" style="background:#779"></span>선택됨</span>
+      <span><span class="legend-dot" style="background:#ccc"></span>예매완료</span>
+    </div>
+    <p id="seat-selection-info" style="font-size:12px;color:#666;margin:8px 0;text-align:center">좌석을 선택해 주세요 (최대 4석)</p>
+    <button class="btn btn-primary" id="btn-proceed-payment" style="width:100%;padding:5px" disabled onclick="openPaymentModal()">결제하기</button>
+  </div>
+</div>
+
+<!-- 결제 모달 -->
+<div class="modal-overlay" id="modal-payment">
+  <div class="modal" style="max-width:380px">
+    <button class="modal-close" onclick="processPayment(false)">✕</button>
+    <h2>결제 확인</h2>
+    <div class="modal-info">
+      <div><span>공연</span><span id="pay-event-title">—</span></div>
+      <div><span>좌석</span><span id="pay-seats">—</span></div>
+      <div><span>예매번호</span><span id="pay-reserv-id">—</span></div>
+    </div>
+    <div class="modal-total">결제 금액: <span id="pay-amount">—</span></div>
+    <p style="font-size:11px;color:#666;margin-bottom:6px">결제를 진행하시겠습니까?</p>
+    <div class="payment-choice">
+      <button class="btn btn-danger" onclick="processPayment(false)">취소</button>
+      <button class="btn btn-success" onclick="processPayment(true)">결제 승인</button>
+    </div>
+  </div>
+</div>
+
+<!-- QR 티켓 모달 -->
+<div class="modal-overlay" id="modal-qr">
+  <div class="modal" style="max-width:340px;text-align:center">
+    <button class="modal-close" onclick="closeModal('modal-qr')">✕</button>
+    <h2>예매 완료</h2>
+    <p style="font-size:11px;color:#666;margin-bottom:8px">QR 코드를 입장 시 제시해 주세요</p>
+    <img id="qr-image" src="" alt="QR 코드" style="width:160px;height:160px;border:1px solid #aaa;margin:0 auto 8px;display:block">
+    <div class="modal-info" style="text-align:left">
+      <div><span>예매번호</span><span id="qr-reserv-id">—</span></div>
+      <div><span>공연</span><span id="qr-event-title">—</span></div>
+      <div><span>좌석</span><span id="qr-seats">—</span></div>
+      <div><span>결제금액</span><span id="qr-amount">—</span></div>
+    </div>
+    <button class="btn btn-primary" style="width:100%;padding:5px;margin-top:8px" onclick="closeModal('modal-qr');showPage('my-reservations')">내 예매 확인</button>
+  </div>
+</div>
+
+<!-- 토스트 -->
+<div class="toast" id="toast">
+  <span id="toast-icon"></span>
+  <strong id="toast-title"></strong>
+  <span id="toast-msg" style="font-size:11px;color:#666;margin-left:4px"></span>
+</div>
+
+<script>
+// ── 설정 ──────────────────────────────────────────────────────────────────────
+const API            = '/api';
+const CLIENT_ID      = '4lmu1rgskpvllt3t1d8stvggc4';
+const COGNITO_API    = 'https://cognito-idp.ap-northeast-2.amazonaws.com/';
+
+// ── 상태 ──────────────────────────────────────────────────────────────────────
+let currentUser     = null;
+let selectedEvent   = null;
+let selectedSeats   = [];
+let pendingReservId = null;
+
+// ── Cognito API 직접 호출 ────────────────────────────────────────────────────
+async function cognitoRequest(target, body) {
+  const res = await fetch(COGNITO_API, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-amz-json-1.1',
+      'X-Amz-Target': `AWSCognitoIdentityProviderService.${target}`,
+    },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) throw data;
+  return data;
+}
+
+// ── 로그인 ────────────────────────────────────────────────────────────────────
+function handleLogin()  { clearAuthErrors(); openModal('modal-login'); }
+function handleSignup() { clearAuthErrors(); openModal('modal-signup'); }
+
+function handleLogout() {
+  localStorage.removeItem('id_token');
+  localStorage.removeItem('access_token');
+  localStorage.removeItem('user_email');
+  currentUser = null;
+  updateAuthUI();
+  showToast('success', '로그아웃됐습니다', '');
+}
+
+function clearAuthErrors() {
+  ['login-email-err','login-pw-err','login-global-err',
+   'signup-email-err','signup-pw-err','signup-pw2-err','signup-global-err',
+   'verify-err'].forEach(id => { const el = document.getElementById(id); if (el) el.textContent = ''; });
+  document.querySelectorAll('.form-input').forEach(el => el.classList.remove('error'));
+}
+
+function switchModal(from, to) {
+  closeModal(from);
+  clearAuthErrors();
+  setTimeout(() => openModal(to), 150);
+}
+
+async function submitLogin() {
+  const email = document.getElementById('login-email').value.trim();
+  const pw    = document.getElementById('login-pw').value;
+  let valid = true;
+  if (!email) { document.getElementById('login-email-err').textContent = '이메일을 입력하세요'; document.getElementById('login-email').classList.add('error'); valid = false; }
+  if (!pw)    { document.getElementById('login-pw-err').textContent = '비밀번호를 입력하세요'; document.getElementById('login-pw').classList.add('error'); valid = false; }
+  if (!valid) return;
+
+  const btn = document.getElementById('btn-login-submit');
+  btn.disabled = true; btn.textContent = '로그인 중…';
+  try {
+    const data = await cognitoRequest('InitiateAuth', {
+      AuthFlow: 'USER_PASSWORD_AUTH',
+      ClientId: CLIENT_ID,
+      AuthParameters: { USERNAME: email, PASSWORD: pw },
+    });
+    const { IdToken, AccessToken } = data.AuthenticationResult;
+    localStorage.setItem('id_token',     IdToken);
+    localStorage.setItem('access_token', AccessToken);
+    const payload = parseJwt(IdToken);
+    localStorage.setItem('user_email', payload?.email || email);
+    closeModal('modal-login');
+    loadUser();
+    showToast('success', '로그인됐습니다', payload?.email || email);
+  } catch (err) {
+    document.getElementById('login-global-err').textContent = cognitoErrMsg(err);
+  } finally {
+    btn.disabled = false; btn.textContent = '로그인';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('login-pw')?.addEventListener('keydown', e => { if (e.key === 'Enter') submitLogin(); });
+  document.getElementById('signup-pw2')?.addEventListener('keydown', e => { if (e.key === 'Enter') submitSignup(); });
+  document.getElementById('verify-code')?.addEventListener('keydown', e => { if (e.key === 'Enter') submitVerify(); });
+});
+
+// ── 회원가입 ──────────────────────────────────────────────────────────────────
+
+async function submitSignup() {
+  const email = document.getElementById('signup-email').value.trim();
+  const pw    = document.getElementById('signup-pw').value;
+  const pw2   = document.getElementById('signup-pw2').value;
+  let valid = true;
+  if (!email) { document.getElementById('signup-email-err').textContent = '이메일을 입력하세요'; document.getElementById('signup-email').classList.add('error'); valid = false; }
+  if (!pw) { document.getElementById('signup-pw-err').textContent = '비밀번호를 입력하세요'; document.getElementById('signup-pw').classList.add('error'); valid = false; }
+  if (pw !== pw2) { document.getElementById('signup-pw2-err').textContent = '비밀번호가 일치하지 않습니다'; document.getElementById('signup-pw2').classList.add('error'); valid = false; }
+  if (!valid) return;
+
+  const btn = document.getElementById('btn-signup-submit');
+  btn.disabled = true; btn.textContent = '가입 중…';
+  try {
+    await cognitoRequest('SignUp', {
+      ClientId: CLIENT_ID,
+      Username: email,
+      Password: pw,
+      UserAttributes: [{ Name: 'email', Value: email }],
+    });
+    closeModal('modal-signup');
+    showToast('success', '회원가입 완료!', '바로 로그인해 주세요');
+    document.getElementById('login-email').value = email;
+    setTimeout(() => openModal('modal-login'), 400);
+  } catch (err) {
+    document.getElementById('signup-global-err').textContent = cognitoErrMsg(err);
+  } finally {
+    btn.disabled = false; btn.textContent = '회원가입';
+  }
+}
+
+
+// ── Cognito 에러 메시지 한국어 변환 ───────────────────────────────────────────
+function cognitoErrMsg(err) {
+  const code = err.__type || err.code || '';
+  const map = {
+    NotAuthorizedException:    '이메일 또는 비밀번호가 올바르지 않습니다',
+    UserNotFoundException:     '등록되지 않은 이메일입니다',
+    UserNotConfirmedException: '이메일 인증이 필요합니다',
+    UsernameExistsException:   '이미 가입된 이메일입니다',
+    InvalidPasswordException:  '비밀번호는 영문+숫자 8자 이상이어야 합니다',
+    CodeMismatchException:     '인증 코드가 올바르지 않습니다',
+    ExpiredCodeException:      '인증 코드가 만료됐습니다. 재발송해 주세요',
+    TooManyRequestsException:  '요청이 너무 많습니다. 잠시 후 다시 시도해 주세요',
+    LimitExceededException:    '시도 횟수를 초과했습니다. 잠시 후 다시 시도해 주세요',
+  };
+  return map[code] || err.message || '오류가 발생했습니다. 다시 시도해 주세요';
+}
+
+function parseJwt(token) {
+  try { return JSON.parse(atob(token.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'))); } catch { return null; }
+}
+
+function loadUser() {
+  const token = localStorage.getItem('id_token');
+  if (!token) return;
+  const payload = parseJwt(token);
+  if (!payload) return;
+  const email = localStorage.getItem('user_email') || payload.email || payload.sub;
+  currentUser = { token, email, sub: payload.sub };
+  updateAuthUI();
+}
+
+function updateAuthUI() {
+  const authArea = document.getElementById('auth-area');
+  const userArea = document.getElementById('user-area');
+  if (currentUser) {
+    authArea.style.display = 'none';
+    userArea.style.display = 'flex';
+    userArea.style.alignItems = 'center';
+    document.getElementById('user-email').textContent = currentUser.email;
+  } else {
+    authArea.style.display = 'inline';
+    userArea.style.display = 'none';
+  }
+}
+
+// ── 페이지 전환 ───────────────────────────────────────────────────────────────
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  document.querySelectorAll('#header nav a').forEach(a => a.style.fontWeight = 'normal');
+  if (name === 'home') document.getElementById('nav-home').style.fontWeight = 'bold';
+  if (name === 'my-reservations') {
+    document.getElementById('nav-my').style.fontWeight = 'bold';
+    loadMyReservations();
+  }
+}
+
+// ── 헬스체크 ──────────────────────────────────────────────────────────────────
+async function checkHealth() {
+  try {
+    await fetch(API + '/health');
+    document.getElementById('status-text').textContent = '● 시스템 정상';
+    document.getElementById('status-text').style.color = '#393';
+  } catch {
+    document.getElementById('status-text').textContent = '● 연결 확인 중';
+    document.getElementById('status-text').style.color = '#c33';
+  }
+}
+
+// ── 이벤트 목록 ───────────────────────────────────────────────────────────────
+const DEMO_EVENTS = [
+  { id:'evt001', category:'콘서트', title:'아이유 CONCERT TOUR 2026', venue:'올림픽체조경기장', date:'2026-05-10', totalSeats:5000, availableSeats:324, price:132000 },
+  { id:'evt002', category:'뮤지컬', title:'레미제라블 내한공연', venue:'샬롯데씨어터', date:'2026-04-15', totalSeats:1200, availableSeats:87, price:170000 },
+  { id:'evt003', category:'스포츠', title:'KBO 한국시리즈 1차전', venue:'잠실야구장', date:'2026-10-22', totalSeats:25000, availableSeats:4200, price:55000 },
+  { id:'evt004', category:'전시', title:'반 고흐 몰입형 아트展', venue:'동대문DDP', date:'2026-04-01', totalSeats:800, availableSeats:12, price:22000 },
+  { id:'evt005', category:'콘서트', title:'방탄소년단 BTS WORLD TOUR', venue:'고척스카이돔', date:'2026-06-20', totalSeats:15000, availableSeats:0, price:198000 },
+  { id:'evt006', category:'클래식', title:'베를린 필하모닉 내한', venue:'예술의전당', date:'2026-07-05', totalSeats:2500, availableSeats:630, price:250000 },
+];
+
+function renderEvents(events) {
+  const tbody = document.getElementById('events-grid');
+  const count = document.getElementById('event-count');
+  count.textContent = `(${events.length}건)`;
+  tbody.innerHTML = events.map(e => {
+    const avail = Number(e.available_seats ?? e.availableSeats ?? 0);
+    const total = Number(e.total_seats ?? e.totalSeats ?? 0);
+    const sold  = avail === 0;
+    const low   = avail > 0 && total > 0 && avail < total * 0.1;
+    const status = sold ? '매진' : low ? '마감임박' : '예매가능';
+    const statusColor = sold ? '#c33' : low ? '#a60' : '#393';
+    const price = Number(e.min_price ?? e.price ?? 0);
+    const date  = e.start_at ? e.start_at.slice(0,10) : (e.date || '-');
+    return `<tr class="${sold ? 'sold' : 'clickable'}" onclick="${sold ? '' : `openSeatModal(${JSON.stringify(e).replace(/"/g,'&quot;')})`}">
+      <td>${e.category || '공연'}</td>
+      <td>${e.title}</td>
+      <td>${e.venue}</td>
+      <td>${date}</td>
+      <td style="text-align:right">${avail.toLocaleString()}</td>
+      <td style="text-align:right">${price.toLocaleString()}</td>
+      <td style="color:${statusColor};font-weight:bold">${status}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── 좌석 선택 모달 ────────────────────────────────────────────────────────────
+let seatData = []; // 실제 DB 좌석 데이터
+
+async function openSeatModal(event) {
+  if (!currentUser) { showToast('error', '로그인 필요', '로그인 후 예매할 수 있습니다'); return; }
+  selectedEvent = event;
+  selectedSeats = [];
+  seatData = [];
+  document.getElementById('seat-modal-title').textContent = event.title;
+  const date = event.start_at ? event.start_at.slice(0,10) : (event.date || '');
+  const price = Number(event.min_price ?? event.price ?? 0);
+  document.getElementById('seat-modal-sub').textContent = `${event.venue} / ${date} / ${price.toLocaleString()}원~`;
+  openModal('modal-seats');
+  document.getElementById('seat-grid').innerHTML = '<div style="text-align:center;padding:16px;color:#666">좌석 불러오는 중…</div>';
+
+  try {
+    const r = await fetch(`${API}/events/${event.id}/seats`);
+    if (!r.ok) throw new Error('seats api error');
+    const d = await r.json();
+    seatData = d.seats || [];
+  } catch {
+    seatData = [];
+  }
+
+  renderSeatGrid();
+  updateSeatInfo();
+}
+
+function renderSeatGrid() {
+  const grid = document.getElementById('seat-grid');
+
+  if (seatData.length === 0) {
+    // fallback: 정적 그리드
+    const rows = ['A','B','C','D','E'];
+    grid.innerHTML = rows.map(row => `
+      <div class="seat-row">
+        <div class="seat-row-label">${row}</div>
+        ${Array.from({length: 10}, (_,i) => {
+          const seatId = `${row}-${i+1}`;
+          const cls = selectedSeats.includes(seatId) ? 'selected' : 'available';
+          return `<button class="seat ${cls}" onclick="toggleSeat('${seatId}')">${i+1}</button>`;
+        }).join('')}
+      </div>`).join('');
+    return;
+  }
+
+  // 실제 DB 데이터 기반 렌더링 (row 기준으로 그룹화)
+  const byRow = {};
+  for (const s of seatData) {
+    if (!byRow[s.row]) byRow[s.row] = [];
+    byRow[s.row].push(s);
+  }
+  const sortedRows = Object.keys(byRow).sort();
+  grid.innerHTML = sortedRows.map(row => {
+    const seats = byRow[row].sort((a,b) => a.number - b.number);
+    return `<div class="seat-row">
+      <div class="seat-row-label">${row}</div>
+      ${seats.map(s => {
+        const isSelected = selectedSeats.includes(s.id);
+        const isReserved = s.status !== 'AVAILABLE';
+        const cls = isReserved ? 'reserved' : isSelected ? 'selected' : 'available';
+        const onclick = isReserved ? '' : `onclick="toggleSeat('${s.id}','${s.row}-${s.number}',${s.price})"`;
+        return `<button class="seat ${cls}" ${onclick} title="${s.row}-${s.number} (${Number(s.price).toLocaleString()}원)">${s.number}</button>`;
+      }).join('')}
+    </div>`;
+  }).join('');
+}
+
+let selectedSeatLabels = []; // 표시용 레이블 (A-1, B-3 등)
+let selectedSeatPrice = 0;   // 선택된 좌석 단가
+
+function toggleSeat(seatId, label, price) {
+  // fallback 모드 (seatId가 A-1 형식)
+  if (!label) { label = seatId; price = Number(selectedEvent.min_price ?? selectedEvent.price ?? 50000); }
+
+  const idx = selectedSeats.indexOf(seatId);
+  if (idx >= 0) {
+    selectedSeats.splice(idx, 1);
+    selectedSeatLabels.splice(idx, 1);
+  } else if (selectedSeats.length < 4) {
+    selectedSeats.push(seatId);
+    selectedSeatLabels.push(label);
+    selectedSeatPrice = price;
+  } else {
+    showToast('error', '최대 4석까지 선택 가능합니다', '');
+    return;
+  }
+  renderSeatGrid();
+  updateSeatInfo();
+}
+
+function updateSeatInfo() {
+  const btn  = document.getElementById('btn-proceed-payment');
+  const info = document.getElementById('seat-selection-info');
+  if (selectedSeats.length === 0) {
+    info.textContent = '좌석을 선택해 주세요 (최대 4석)';
+    btn.disabled = true;
+  } else {
+    const unitPrice = seatData.length > 0 ? selectedSeatPrice : Number(selectedEvent.min_price ?? selectedEvent.price ?? 0);
+    const total = selectedSeats.length * unitPrice;
+    info.textContent = `선택: ${selectedSeatLabels.join(', ')} | 합계: ${total.toLocaleString()}원`;
+    btn.disabled = false;
+  }
+}
+
+// ── 예매 접수 → 결제 모달 ─────────────────────────────────────────────────────
+async function openPaymentModal() {
+  const btn = document.getElementById('btn-proceed-payment');
+  btn.disabled = true; btn.textContent = '예매 접수 중…';
+  try {
+    const r = await fetch(API + '/reservations', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
+      body: JSON.stringify({ eventId: selectedEvent.id, seatIds: selectedSeats, userId: currentUser.sub }),
+    });
+    const d = await r.json();
+    if (!r.ok) { showToast('error', '예매 실패', d.error || ''); btn.disabled = false; btn.textContent = '결제하기'; return; }
+
+    pendingReservId = d.reservationId;
+    closeModal('modal-seats');
+
+    const unitPrice = seatData.length > 0 ? selectedSeatPrice : Number(selectedEvent.min_price ?? selectedEvent.price ?? 0);
+    const total = selectedSeats.length * unitPrice;
+    document.getElementById('pay-event-title').textContent = selectedEvent.title;
+    document.getElementById('pay-seats').textContent       = selectedSeatLabels.join(', ');
+    document.getElementById('pay-reserv-id').textContent   = pendingReservId?.slice(0,8) + '…';
+    document.getElementById('pay-amount').textContent = total.toLocaleString() + '원';
+    openModal('modal-payment');
+  } catch {
+    showToast('error', '네트워크 오류', '서버에 연결할 수 없습니다');
+  } finally {
+    btn.disabled = false; btn.textContent = '결제하기';
+  }
+}
+
+// ── 결제 처리 ─────────────────────────────────────────────────────────────────
+async function processPayment(approved) {
+  closeModal('modal-payment');
+  try {
+    const r = await fetch(API + '/payments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser?.token}` },
+      body: JSON.stringify({ reservationId: pendingReservId, approved, userId: currentUser?.sub }),
+    });
+    const d = await r.json();
+    if (approved && d.status === 'CONFIRMED') {
+      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=${encodeURIComponent(pendingReservId)}`;
+      document.getElementById('qr-image').src             = qrUrl;
+      document.getElementById('qr-reserv-id').textContent = pendingReservId?.slice(0,8) + '…';
+      document.getElementById('qr-event-title').textContent = selectedEvent?.title || '—';
+      document.getElementById('qr-seats').textContent     = selectedSeats.join(', ');
+      document.getElementById('qr-amount').textContent    = (d.amount ?? 0).toLocaleString() + '원';
+      openModal('modal-qr');
+      showToast('success', '결제 완료!', `예매번호 ${pendingReservId?.slice(0,8)}…`);
+    } else {
+      showToast('info', '결제 취소됨', '예매 내역은 내 예매에서 확인하세요');
+    }
+  } catch {
+    showToast('error', '네트워크 오류', '');
+  }
+}
+
+// ── 내 예매 목록 ──────────────────────────────────────────────────────────────
+async function loadMyReservations() {
+  if (!currentUser) {
+    document.getElementById('my-reserv-list').innerHTML =
+      '<p style="color:#666;padding:12px">로그인 후 예매 내역을 확인할 수 있습니다. <button class="btn" onclick="handleLogin()">로그인</button></p>';
+    return;
+  }
+  try {
+    const r = await fetch(API + '/reservations', {
+      headers: { 'Authorization': `Bearer ${currentUser.token}`, 'x-amzn-oidc-identity': currentUser.sub }
+    });
+    const data = await r.json();
+    renderMyReservations(Array.isArray(data) ? data : []);
+  } catch {
+    document.getElementById('my-reserv-list').innerHTML = '<p style="color:#c33;padding:12px">불러오기 실패</p>';
+  }
+}
+
+function renderMyReservations(list) {
+  const el = document.getElementById('my-reserv-list');
+  document.getElementById('my-reserv-count').textContent = `(${list.length}건)`;
+  if (!list.length) {
+    el.innerHTML = '<p style="color:#666;padding:12px">예매 내역이 없습니다</p>';
+    return;
+  }
+  const statusMap = { CONFIRMED:'예매확정', PENDING:'결제대기', CANCELLED:'취소됨', EXPIRED:'만료' };
+  el.innerHTML = `<table class="reservations">
+    <thead><tr><th>상태</th><th>공연</th><th>일시</th><th>금액</th><th>예매번호</th><th>QR</th></tr></thead>
+    <tbody>${list.map(r => {
+      const label = statusMap[r.status] || r.status;
+      const qrUrl = r.status === 'CONFIRMED'
+        ? `https://api.qrserver.com/v1/create-qr-code/?size=60x60&data=${encodeURIComponent(r.id)}`
+        : '';
+      return `<tr style="${r.status==='CANCELLED'||r.status==='EXPIRED'?'color:#aaa':''}">
+        <td>${label}</td>
+        <td>${r.event_title || '—'}</td>
+        <td>${r.start_at?.slice(0,10) || '—'}</td>
+        <td style="text-align:right">${(r.total_price??0).toLocaleString()}원</td>
+        <td style="font-size:11px">${r.id?.slice(0,8)}…</td>
+        <td>${qrUrl ? `<img src="${qrUrl}" alt="QR" style="width:40px;height:40px">` : '—'}</td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table>`;
+}
+
+// ── 모달 유틸 ─────────────────────────────────────────────────────────────────
+function openModal(id)  { document.getElementById(id).classList.add('open'); }
+function closeModal(id) { document.getElementById(id).classList.remove('open'); }
+document.querySelectorAll('.modal-overlay').forEach(o => {
+  o.addEventListener('click', e => {
+    if (e.target !== o) return;
+    // 결제 모달은 바깥 클릭으로 닫을 수 없음
+    if (o.id === 'modal-payment') return;
+    o.classList.remove('open');
+  });
+});
+
+// ── 토스트 ────────────────────────────────────────────────────────────────────
+function showToast(type, title, msg) {
+  const t = document.getElementById('toast');
+  document.getElementById('toast-icon').textContent  = type === 'success' ? '[OK] ' : type === 'error' ? '[ERR] ' : '[i] ';
+  document.getElementById('toast-title').textContent = title;
+  document.getElementById('toast-msg').textContent   = msg;
+  t.className = `toast ${type === 'error' ? 'error' : type === 'success' ? 'success' : ''} show`;
+  setTimeout(() => t.classList.remove('show'), 4000);
+}
+
+// ── 초기화 ────────────────────────────────────────────────────────────────────
+(async () => {
+  loadUser();
+  checkHealth();
+  try {
+    const r = await fetch(API + '/events');
+    const data = await r.json();
+    renderEvents(Array.isArray(data) && data.length ? data : DEMO_EVENTS);
+  } catch {
+    renderEvents(DEMO_EVENTS);
+  }
+})();
+</script>
+</body>
+</html>

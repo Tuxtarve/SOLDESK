@@ -1,0 +1,12 @@
+env         = "prod"
+aws_region  = "ap-northeast-2"
+app_name    = "ticketing"
+db_password = "dkzndk34"
+key_name    = "your-ec2-keypair"
+github_repo = "your-org/ticketing"
+
+# 기본값 ticketing-eks. 이미 prod-ticketing-eks 로 클러스터가 있으면 교체 방지용으로 아래 주석 해제:
+# eks_cluster_name = "prod-ticketing-eks"
+
+# Cognito 호스티드 UI 접두사(리전 내 유일). 이미 prod- 접두사 도메인을 쓰면:
+# cognito_domain_prefix = "prod-ticketing-auth"

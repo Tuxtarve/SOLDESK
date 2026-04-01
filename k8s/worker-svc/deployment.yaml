@@ -1,0 +1,38 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: worker-svc
+  namespace: ticketing
+  labels:
+    app: worker-svc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: worker-svc
+  template:
+    metadata:
+      labels:
+        app: worker-svc
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3002"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: worker-svc
+          image: ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/worker-svc:latest
+          ports:
+            - containerPort: 3002
+          envFrom:
+            - configMapRef:
+                name: ticketing-config
+            - secretRef:
+                name: ticketing-secrets
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "300m"

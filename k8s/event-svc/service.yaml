@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: event-svc
+  namespace: ticketing
+  labels:
+    app: event-svc
+spec:
+  selector:
+    app: event-svc
+  ports:
+    - protocol: TCP
+      port: 3000
+      targetPort: 3000
+  type: ClusterIP

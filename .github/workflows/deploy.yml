@@ -1,0 +1,153 @@
+name: Build & Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  AWS_REGION:              ap-northeast-2
+  EKS_CLUSTER:             prod-ticketing-eks
+  ECR_REGISTRY:            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.ap-northeast-2.amazonaws.com
+  S3_FRONTEND_BUCKET:      prod-ticketing-frontend-734772058616
+  CLOUDFRONT_DIST_ID:      E3IXF2JYM0C70A
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  # ── 변경 감지 ──────────────────────────────────────────────────────────────
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      event-svc:  ${{ steps.filter.outputs.event-svc }}
+      reserv-svc: ${{ steps.filter.outputs.reserv-svc }}
+      worker-svc: ${{ steps.filter.outputs.worker-svc }}
+      frontend:   ${{ steps.filter.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            event-svc:
+              - 'services/event-svc/**'
+            reserv-svc:
+              - 'services/reserv-svc/**'
+            worker-svc:
+              - 'services/worker-svc/**'
+            frontend:
+              - 'frontend/**'
+
+  # ── event-svc 빌드 & 배포 ─────────────────────────────────────────────────
+  deploy-event-svc:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.event-svc == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region:     ${{ env.AWS_REGION }}
+      - name: ECR 로그인
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Docker 빌드 & ECR Push
+        working-directory: services/event-svc
+        run: |
+          IMAGE=${{ env.ECR_REGISTRY }}/ticketing/event-svc
+          docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:latest .
+          docker push $IMAGE:${{ github.sha }}
+          docker push $IMAGE:latest
+      - name: EKS kubeconfig
+        run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }}
+      - name: Rolling Deploy
+        run: |
+          kubectl set image deployment/event-svc \
+            event-svc=${{ env.ECR_REGISTRY }}/ticketing/event-svc:${{ github.sha }} \
+            -n ticketing
+          kubectl rollout status deployment/event-svc -n ticketing --timeout=120s
+
+  # ── reserv-svc 빌드 & 배포 ────────────────────────────────────────────────
+  deploy-reserv-svc:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.reserv-svc == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region:     ${{ env.AWS_REGION }}
+      - name: ECR 로그인
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Docker 빌드 & ECR Push
+        working-directory: services/reserv-svc
+        run: |
+          IMAGE=${{ env.ECR_REGISTRY }}/ticketing/reserv-svc
+          docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:latest .
+          docker push $IMAGE:${{ github.sha }}
+          docker push $IMAGE:latest
+      - name: EKS kubeconfig
+        run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }}
+      - name: Rolling Deploy
+        run: |
+          kubectl set image deployment/reserv-svc \
+            reserv-svc=${{ env.ECR_REGISTRY }}/ticketing/reserv-svc:${{ github.sha }} \
+            -n ticketing
+          kubectl rollout status deployment/reserv-svc -n ticketing --timeout=120s
+
+  # ── worker-svc 빌드 & 배포 ────────────────────────────────────────────────
+  deploy-worker-svc:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.worker-svc == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region:     ${{ env.AWS_REGION }}
+      - name: ECR 로그인
+        uses: aws-actions/amazon-ecr-login@v2
+      - name: Docker 빌드 & ECR Push
+        working-directory: services/worker-svc
+        run: |
+          IMAGE=${{ env.ECR_REGISTRY }}/ticketing/worker-svc
+          docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:latest .
+          docker push $IMAGE:${{ github.sha }}
+          docker push $IMAGE:latest
+      - name: EKS kubeconfig
+        run: aws eks update-kubeconfig --name ${{ env.EKS_CLUSTER }} --region ${{ env.AWS_REGION }}
+      - name: Rolling Deploy
+        run: |
+          kubectl set image deployment/worker-svc \
+            worker-svc=${{ env.ECR_REGISTRY }}/ticketing/worker-svc:${{ github.sha }} \
+            -n ticketing
+          kubectl rollout status deployment/worker-svc -n ticketing --timeout=120s
+
+  # ── 프론트엔드 S3 배포 ─────────────────────────────────────────────────────
+  deploy-frontend:
+    runs-on: ubuntu-latest
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region:     ${{ env.AWS_REGION }}
+      - name: S3 업로드
+        run: |
+          aws s3 sync frontend/src/ s3://${{ env.S3_FRONTEND_BUCKET }}/ \
+            --delete --cache-control "public, max-age=86400"
+      - name: CloudFront 캐시 무효화
+        run: |
+          aws cloudfront create-invalidation \
+            --distribution-id ${{ env.CLOUDFRONT_DIST_ID }} \
+            --paths "/*"

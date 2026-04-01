@@ -1,0 +1,43 @@
+# Cognito JSON 은 scripts/apply-ticketing-k8s.sh 가 envsubst 로 치환합니다.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ticketing-ingress
+  namespace: ticketing
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+spec:
+  ingressClassName: alb
+  rules:
+    - http:
+        paths:
+          - path: /api/events
+            pathType: Prefix
+            backend:
+              service:
+                name: event-svc
+                port:
+                  number: 3000
+          - path: /api/reservations
+            pathType: Prefix
+            backend:
+              service:
+                name: reserv-svc
+                port:
+                  number: 3001
+          - path: /api/payments
+            pathType: Prefix
+            backend:
+              service:
+                name: reserv-svc
+                port:
+                  number: 3001
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: event-svc
+                port:
+                  number: 3000

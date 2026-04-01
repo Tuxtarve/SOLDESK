@@ -1,0 +1,42 @@
+# Terraform
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+*.tfvars
+*.tfvars.json
+!*.tfvars.example
+.terraform.lock.hcl
+
+# Node.js
+node_modules/
+npm-debug.log*
+.env
+.env.*
+!.env.example
+
+# 빌드 산출물
+dist/
+build/
+*.zip
+
+# 운영체제
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# 모니터링 환경변수
+monitoring/.env
+monitoring/grafana/data/
+
+# AWS 인증
+*.pem
+*.key
+credentials
+
+# Claude Code
+.claude/
