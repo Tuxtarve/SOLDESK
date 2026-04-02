@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TF_DIR="$ROOT/terraform"
+TF_DIR="$ROOT"
 K8S="$ROOT/k8s"
 cd "$TF_DIR"
 
@@ -22,8 +22,6 @@ DB_W="$(terraform output -raw rds_writer_endpoint)"
 DB_R="$(terraform output -raw rds_reader_endpoint)"
 REDIS_H="$(terraform output -raw redis_endpoint)"
 SQS_URL="$(terraform output -raw sqs_queue_url)"
-SNS_ARN="$(terraform output -raw sns_confirmed_topic_arn)"
-TICKETS_BUCKET="$(terraform output -raw tickets_bucket_name)"
 # .gitignore 또는 tfvars 에 맞춘 비밀번호 — 필요 시 환경변수로 덮어씀
 : "${DB_PASSWORD:=dkzndk34}"
 
@@ -51,20 +49,23 @@ kubectl create secret generic ticketing-secrets \
   --from-literal=DB_PASSWORD="$DB_PASSWORD" \
   --from-literal=REDIS_HOST="$REDIS_H" \
   --from-literal=SQS_QUEUE_URL="$SQS_URL" \
-  --from-literal=SNS_CONFIRMED_ARN="$SNS_ARN" \
-  --from-literal=S3_TICKETS_BUCKET="$TICKETS_BUCKET" \
   -n ticketing \
   --dry-run=client -o yaml | kubectl apply -f -
 
 ACCOUNT_ID="$(terraform output -raw aws_account_id)"
 REGION="$(terraform output -raw aws_region)"
-for SVC in event-svc reserv-svc worker-svc; do
-  sed -e "s/ACCOUNT_ID/${ACCOUNT_ID}/g" -e "s|ap-northeast-2|${REGION}|g" \
-    "$K8S/${SVC}/deployment.yaml" | kubectl apply -f -
-  kubectl apply -f "$K8S/${SVC}/service.yaml"
-done
-kubectl apply -f "$K8S/event-svc/hpa.yaml"
-kubectl apply -f "$K8S/reserv-svc/hpa.yaml"
+ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
+
+# Kustomize로 이미지 경로를 실제 ECR 레지스트리로 설정
+cd "$K8S"
+kustomize edit set image \
+  "ticketing/event-svc=${ECR_REGISTRY}/ticketing/event-svc:latest" \
+  "ticketing/reserv-svc=${ECR_REGISTRY}/ticketing/reserv-svc:latest" \
+  "ticketing/worker-svc=${ECR_REGISTRY}/ticketing/worker-svc:latest"
+
+# ingress는 Cognito JSON 치환이 필요하므로 별도 적용
+kubectl apply -k . --prune -l app.kubernetes.io/part-of=ticketing 2>/dev/null || kubectl apply -k .
+cd "$TF_DIR"
 
 kubectl apply -f "$TMP_INGRESS"
 

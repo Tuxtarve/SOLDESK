@@ -3,16 +3,21 @@ resource "aws_elasticache_subnet_group" "main" {
   subnet_ids = var.subnet_ids
 }
 
-resource "aws_elasticache_cluster" "redis" {
-  cluster_id           = "ticketing-redis"
+resource "aws_elasticache_replication_group" "redis" {
+  replication_group_id = "ticketing-redis"
+  description          = "Ticketing Redis replication group"
   engine               = "redis"
-  node_type            = "cache.t3.micro"
-  num_cache_nodes      = 1
-  parameter_group_name = "default.redis7"
   engine_version       = "7.0"
+  node_type            = "cache.t3.micro"
   port                 = 6379
-  subnet_group_name    = aws_elasticache_subnet_group.main.name
-  security_group_ids   = [var.security_group_id]
+
+  # Primary 1 + Replica 1 = 총 2노드, 자동 failover
+  num_cache_clusters   = 2
+  automatic_failover_enabled = true
+  multi_az_enabled           = true
+
+  subnet_group_name  = aws_elasticache_subnet_group.main.name
+  security_group_ids = [var.security_group_id]
 
   # 스냅샷 비활성화 (프리티어 최적화)
   snapshot_retention_limit = 0

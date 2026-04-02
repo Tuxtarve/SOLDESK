@@ -58,9 +58,6 @@ module "cloudfront" {
   frontend_bucket_arn  = module.s3.frontend_bucket_arn
   frontend_domain      = module.s3.frontend_bucket_regional_domain
   waf_acl_arn          = module.waf.waf_acl_arn
-  cognito_user_pool_id = module.cognito.user_pool_id
-  cognito_client_id    = module.cognito.user_pool_client_id
-  cognito_domain       = module.cognito.cognito_domain
   alb_dns_name         = "k8s-ticketin-ticketin-a8d2b3900a-85679387.ap-northeast-2.elb.amazonaws.com"
 
   # destroy 시 CloudFront가 WAF보다 먼저 삭제되도록 보장
@@ -124,9 +121,6 @@ module "cicd" {
   github_repo     = var.github_repo
   cluster_name    = module.eks.cluster_name
   s3_frontend_arn = module.s3.frontend_bucket_arn
-  s3_tickets_arn  = module.s3.tickets_bucket_arn
-  sqs_queue_arn   = module.sqs.reservation_queue_arn
-  sns_topic_arn   = module.sqs.sns_topic_arn
 }
 
 data "aws_caller_identity" "current" {}
@@ -183,14 +177,6 @@ output "cognito_user_pool_arn" {
 
 output "cognito_domain" {
   value = module.cognito.cognito_domain
-}
-
-output "tickets_bucket_name" {
-  value = module.s3.tickets_bucket_id
-}
-
-output "sns_confirmed_topic_arn" {
-  value = module.sqs.sns_confirmed_arn
 }
 
 output "aws_region" {

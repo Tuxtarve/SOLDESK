@@ -1,11 +1,16 @@
-# destroy 시 EKS Ingress/Service 리소스를 먼저 정리하여 ALB Controller가
-# 생성한 로드밸런서·타겟그룹·ENI를 제거한 뒤 클러스터를 삭제한다.
-# 이 작업이 없으면 ALB가 VPC 서브넷·보안그룹에 남아 VPC destroy가 실패한다.
+# destroy 순서: 이 null_resource 먼저 삭제(→ cleanup 실행) → 노드그룹 → EKS 클러스터
+# depends_on 으로 EKS/노드가 살아 있는 동안 kubectl 정리가 수행되도록 보장한다.
+# ALB Controller가 만든 로드밸런서·타겟그룹·ENI를 제거해야 VPC destroy가 성공한다.
 resource "null_resource" "cleanup_k8s_resources" {
   triggers = {
     cluster_name = var.cluster_name
     region       = var.aws_region
   }
+
+  depends_on = [
+    aws_eks_cluster.main,
+    aws_eks_node_group.app,
+  ]
 
   provisioner "local-exec" {
     when    = destroy
@@ -89,7 +94,6 @@ resource "aws_eks_cluster" "main" {
 
   depends_on = [
     aws_iam_role_policy_attachment.eks_cluster,
-    null_resource.cleanup_k8s_resources,
   ]
   tags = { Name = var.cluster_name, Environment = var.env }
 }

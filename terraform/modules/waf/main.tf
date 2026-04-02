@@ -1,3 +1,11 @@
+terraform {
+  required_providers {
+    aws = {
+      source = "hashicorp/aws"
+    }
+  }
+}
+
 resource "aws_wafv2_web_acl" "main" {
   name        = "ticketing-waf"
   scope       = "CLOUDFRONT"

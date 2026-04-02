@@ -21,7 +21,7 @@ spec:
     spec:
       containers:
         - name: worker-svc
-          image: ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/worker-svc:latest
+          image: ticketing/worker-svc:latest
           ports:
             - containerPort: 3002
           envFrom:

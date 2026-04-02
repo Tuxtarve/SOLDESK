@@ -1,0 +1,28 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - configmap.yaml
+  - event-svc/deployment.yaml
+  - event-svc/service.yaml
+  - event-svc/hpa.yaml
+  - reserv-svc/deployment.yaml
+  - reserv-svc/service.yaml
+  - reserv-svc/hpa.yaml
+  - worker-svc/deployment.yaml
+  - worker-svc/service.yaml
+  - ingress.yaml
+
+# 배포 시 실제 ECR 레지스트리로 이미지 경로를 덮어씀
+# 사용법: kustomize edit set image ticketing/event-svc=123456789.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/event-svc:abc123
+images:
+  - name: ticketing/event-svc
+    newName: ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/event-svc
+    newTag: latest
+  - name: ticketing/reserv-svc
+    newName: ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/reserv-svc
+    newTag: latest
+  - name: ticketing/worker-svc
+    newName: ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/worker-svc
+    newTag: latest

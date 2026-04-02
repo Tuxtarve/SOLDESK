@@ -19,8 +19,6 @@ data:
 #   --from-literal=DB_PASSWORD=dkzndk34 \
 #   --from-literal=REDIS_HOST=<elasticache-endpoint> \
 #   --from-literal=SQS_QUEUE_URL=<sqs-url> \
-#   --from-literal=SNS_CONFIRMED_ARN=<sns-arn> \
-#   --from-literal=S3_TICKETS_BUCKET=<bucket-name> \
 #   --from-literal=COGNITO_USER_POOL_ID=<pool-id> \
 #   --from-literal=COGNITO_CLIENT_ID=<client-id> \
 #   -n ticketing

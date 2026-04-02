@@ -12,6 +12,52 @@ resource "aws_cloudfront_distribution" "main" {
   default_root_object = "index.html"
   web_acl_id          = var.waf_acl_arn
   price_class         = "PriceClass_200"
+  wait_for_deployment = true
+
+  # destroy 전에 distribution을 비활성화하고 전파 완료를 기다림.
+  # 이렇게 해야 OAC 삭제 시 "OriginAccessControlInUse" 에러가 발생하지 않음.
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      set +e
+      echo "=== CloudFront 삭제 준비: distribution 비활성화 ==="
+      DIST_ID="${self.id}"
+
+      ETAG=$(aws cloudfront get-distribution-config --id "$DIST_ID" \
+        --query 'ETag' --output text 2>&1)
+      if [ $? -ne 0 ]; then
+        echo "CloudFront distribution을 찾을 수 없음 (이미 삭제됨). 스킵합니다."
+        exit 0
+      fi
+
+      if [ -n "$ETAG" ] && [ "$ETAG" != "None" ]; then
+        CF_TMP=$(mktemp)
+        trap 'rm -f "$CF_TMP"' EXIT
+
+        aws cloudfront get-distribution-config --id "$DIST_ID" \
+          --query 'DistributionConfig' > "$CF_TMP"
+
+        python3 -c "
+import json, sys
+with open(sys.argv[1]) as f:
+    cfg = json.load(f)
+cfg['Enabled'] = False
+with open(sys.argv[1], 'w') as f:
+    json.dump(cfg, f)
+" "$CF_TMP"
+
+        aws cloudfront update-distribution \
+          --id "$DIST_ID" \
+          --distribution-config "file://$CF_TMP" \
+          --if-match "$ETAG" > /dev/null || true
+
+        echo "Distribution 비활성화 요청 완료. 전파 대기 중..."
+        aws cloudfront wait distribution-deployed --id "$DIST_ID" || true
+
+        echo "=== 전파 완료. Terraform이 삭제를 진행합니다 ==="
+      fi
+    EOT
+  }
 
   # Origin 1: S3 (정적 프론트엔드)
   origin {
