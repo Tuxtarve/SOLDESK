@@ -7,10 +7,10 @@ on:
 
 env:
   AWS_REGION:              ap-northeast-2
-  EKS_CLUSTER:             prod-ticketing-eks
+  EKS_CLUSTER:             ${{ secrets.EKS_CLUSTER }}
   ECR_REGISTRY:            ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.ap-northeast-2.amazonaws.com
-  S3_FRONTEND_BUCKET:      prod-ticketing-frontend-734772058616
-  CLOUDFRONT_DIST_ID:      E3IXF2JYM0C70A
+  S3_FRONTEND_BUCKET:      ${{ secrets.S3_FRONTEND_BUCKET }}
+  CLOUDFRONT_DIST_ID:      ${{ secrets.CLOUDFRONT_DIST_ID }}
 
 permissions:
   id-token: write

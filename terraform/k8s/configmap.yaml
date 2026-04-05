@@ -16,7 +16,7 @@ data:
 #   --from-literal=DB_WRITER_HOST=<rds-writer-endpoint> \
 #   --from-literal=DB_READER_HOST=<rds-reader-endpoint> \
 #   --from-literal=DB_USER=root \
-#   --from-literal=DB_PASSWORD=dkzndk34 \
+#   --from-literal=DB_PASSWORD=<YOUR_DB_PASSWORD> \
 #   --from-literal=REDIS_HOST=<elasticache-endpoint> \
 #   --from-literal=SQS_QUEUE_URL=<sqs-url> \
 #   --from-literal=COGNITO_USER_POOL_ID=<pool-id> \

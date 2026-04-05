@@ -22,8 +22,12 @@ DB_W="$(terraform output -raw rds_writer_endpoint)"
 DB_R="$(terraform output -raw rds_reader_endpoint)"
 REDIS_H="$(terraform output -raw redis_endpoint)"
 SQS_URL="$(terraform output -raw sqs_queue_url)"
-# .gitignore 또는 tfvars 에 맞춘 비밀번호 — 필요 시 환경변수로 덮어씀
-: "${DB_PASSWORD:=dkzndk34}"
+# DB_PASSWORD 환경변수 필수
+if [[ -z "${DB_PASSWORD:-}" ]]; then
+  echo "ERROR: DB_PASSWORD 환경변수를 설정하세요." >&2
+  echo "  export DB_PASSWORD='your-password'" >&2
+  exit 1
+fi
 
 TMP_INGRESS="$(mktemp)"
 trap 'rm -f "$TMP_INGRESS"' EXIT

@@ -40,6 +40,12 @@ variable "eks_cluster_name" {
   default     = "ticketing-eks"
 }
 
+variable "alb_dns_name" {
+  description = "ALB Ingress Controller가 생성한 ALB의 DNS 이름. EKS 배포 후 'kubectl get ingress -n ticketing'으로 확인"
+  type        = string
+  default     = ""
+}
+
 variable "cognito_domain_prefix" {
   description = "Cognito 호스티드 UI 도메인 접두사 (전역 유일)"
   type        = string

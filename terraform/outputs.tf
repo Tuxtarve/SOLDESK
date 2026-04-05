@@ -1,0 +1,69 @@
+output "cloudfront_domain" {
+  value = module.cloudfront.cloudfront_domain
+}
+
+output "cognito_user_pool_id" {
+  value = module.cognito.user_pool_id
+}
+
+output "cognito_client_id" {
+  value = module.cognito.user_pool_client_id
+}
+
+output "rds_writer_endpoint" {
+  value     = module.rds.writer_endpoint
+  sensitive = true
+}
+
+output "rds_reader_endpoint" {
+  value     = module.rds.reader_endpoint
+  sensitive = true
+}
+
+output "redis_endpoint" {
+  value     = module.elasticache.redis_endpoint
+  sensitive = true
+}
+
+output "sqs_queue_url" {
+  value = module.sqs.reservation_queue_url
+}
+
+output "eks_cluster_name" {
+  description = "Pass to kubectl: aws eks update-kubeconfig --region <region> --name $(terraform output -raw eks_cluster_name)"
+  value       = module.eks.cluster_name
+}
+
+output "vpc_id" {
+  description = "VPC ID (AWS Load Balancer Controller --set vpcId)"
+  value       = module.network.vpc_id
+}
+
+output "alb_controller_role_arn" {
+  description = "IRSA role for aws-load-balancer-controller ServiceAccount"
+  value       = module.eks.alb_controller_role_arn
+}
+
+output "cognito_user_pool_arn" {
+  value = module.cognito.user_pool_arn
+}
+
+output "cognito_domain" {
+  value = module.cognito.cognito_domain
+}
+
+output "aws_region" {
+  value = var.aws_region
+}
+
+output "aws_account_id" {
+  value = data.aws_caller_identity.current.account_id
+}
+
+output "monitoring_ec2_ip" {
+  value = module.monitoring.public_ip
+}
+
+output "github_actions_role_arn" {
+  value = module.cicd.github_actions_role_arn
+}

@@ -17,8 +17,9 @@ resource "aws_cloudfront_distribution" "main" {
   # destroy 전에 distribution을 비활성화하고 전파 완료를 기다림.
   # 이렇게 해야 OAC 삭제 시 "OriginAccessControlInUse" 에러가 발생하지 않음.
   provisioner "local-exec" {
-    when    = destroy
-    command = <<-EOT
+    when        = destroy
+    interpreter = ["bash", "-c"]
+    command     = <<-EOT
       set +e
       echo "=== CloudFront 삭제 준비: distribution 비활성화 ==="
       DIST_ID="${self.id}"
@@ -66,16 +67,18 @@ with open(sys.argv[1], 'w') as f:
     origin_access_control_id = aws_cloudfront_origin_access_control.frontend.id
   }
 
-  # Origin 2: ALB (API)
-  origin {
-    domain_name = var.alb_dns_name
-    origin_id   = "ALB-api"
-    # ALB는 ACM 없이 HTTP(80)만 쓸 때: CloudFront → ALB도 HTTP (뷰어는 여전히 HTTPS)
-    custom_origin_config {
-      http_port              = 80
-      https_port             = 443
-      origin_protocol_policy = "http-only"
-      origin_ssl_protocols   = ["TLSv1.2"]
+  # Origin 2: ALB (API) — alb_dns_name이 비어있으면 생략 (EKS 배포 전)
+  dynamic "origin" {
+    for_each = var.alb_dns_name != "" ? [var.alb_dns_name] : []
+    content {
+      domain_name = origin.value
+      origin_id   = "ALB-api"
+      custom_origin_config {
+        http_port              = 80
+        https_port             = 443
+        origin_protocol_policy = "http-only"
+        origin_ssl_protocols   = ["TLSv1.2"]
+      }
     }
   }
 
@@ -97,24 +100,27 @@ with open(sys.argv[1], 'w') as f:
     max_ttl     = 31536000
   }
 
-  # API 경로 캐시 (캐싱 없음)
-  ordered_cache_behavior {
-    path_pattern           = "/api/*"
-    target_origin_id       = "ALB-api"
-    viewer_protocol_policy = "redirect-to-https"
-    allowed_methods        = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
-    cached_methods         = ["GET", "HEAD"]
-    compress               = true
+  # API 경로 캐시 (캐싱 없음) — ALB origin이 있을 때만 생성
+  dynamic "ordered_cache_behavior" {
+    for_each = var.alb_dns_name != "" ? [1] : []
+    content {
+      path_pattern           = "/api/*"
+      target_origin_id       = "ALB-api"
+      viewer_protocol_policy = "redirect-to-https"
+      allowed_methods        = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
+      cached_methods         = ["GET", "HEAD"]
+      compress               = true
 
-    forwarded_values {
-      query_string = true
-      headers      = ["Authorization", "Content-Type", "Host", "CloudFront-Forwarded-Proto"]
-      cookies { forward = "all" }
+      forwarded_values {
+        query_string = true
+        headers      = ["Authorization", "Content-Type", "Host", "CloudFront-Forwarded-Proto"]
+        cookies { forward = "all" }
+      }
+
+      min_ttl     = 0
+      default_ttl = 0
+      max_ttl     = 0
     }
-
-    min_ttl     = 0
-    default_ttl = 0
-    max_ttl     = 0
   }
 
   # SPA 라우팅 (404 → index.html)

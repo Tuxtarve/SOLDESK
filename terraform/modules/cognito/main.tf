@@ -55,8 +55,8 @@ resource "aws_cognito_user_pool_client" "web" {
     refresh_token = "days"
   }
 
-  callback_urls = ["https://placeholder.cloudfront.net/callback"]
-  logout_urls   = ["https://placeholder.cloudfront.net/logout"]
+  callback_urls = ["https://${var.cloudfront_domain}/callback"]
+  logout_urls   = ["https://${var.cloudfront_domain}/logout"]
 
   allowed_oauth_flows                  = ["code"]
   allowed_oauth_scopes                 = ["openid", "email", "profile"]

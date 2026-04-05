@@ -24,15 +24,15 @@ groups:
           summary: "SQS 큐 적체 {{ $value }}개"
           description: "예매 큐에 메시지가 500개 이상 쌓였습니다. worker-svc를 확인하세요."
 
-      # Pod OOMKilled (메모리 부족 재시작)
-      - alert: PodOOMKilled
-        expr: kube_pod_container_status_restarts_total > 3
-        for: 1m
+      # 서비스 /healthz 응답 실패 (Pod 비정상)
+      - alert: ServiceHealthCheckFailed
+        expr: up{job=~"event-svc|reserv-svc|worker-svc"} == 0
+        for: 2m
         labels:
           severity: critical
         annotations:
-          summary: "Pod {{ $labels.pod }} 재시작 {{ $value }}회"
-          description: "t3.small 메모리 부족 가능성. 리소스 limits 확인 필요."
+          summary: "{{ $labels.job }} 헬스체크 실패"
+          description: "서비스가 응답하지 않습니다. Pod 상태를 확인하세요."
 
   - name: ticketing-warning
     rules:

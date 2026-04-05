@@ -33,8 +33,10 @@ scrape_configs:
     static_configs:
       - targets: ['redis-exporter:9121']
 
-  # ④ EKS 내 서비스 메트릭 (Pod annotation 기반 자동 수집)
-  #    EKS 서비스들이 /metrics 엔드포인트 노출 → 모니터링 서버가 직접 scrape
+  # ④ EKS 내 서비스 메트릭
+  #    배포 시 EKS_ALB_DNS 환경변수를 설정한 뒤 envsubst로 치환하세요:
+  #    export EKS_ALB_DNS=$(kubectl get ingress -n ticketing -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
+  #    envsubst < prometheus.yml.tpl > prometheus.yml
   - job_name: 'event-svc'
     static_configs:
       - targets: ['${EKS_ALB_DNS}:80']
