@@ -1,7 +1,13 @@
-variable "env" { type = string }
-variable "subnet_ids" { type = list(string) }
-variable "security_group_id" { type = string }
+variable "env" {
+  type = string
+}
+variable "subnet_ids" {
+  type = list(string)
+}
+variable "security_group_id" {
+  type = string
+}
 variable "db_password" {
-  type      = string
+  type = string
   sensitive = true
 }

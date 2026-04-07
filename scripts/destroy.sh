@@ -5,7 +5,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$ROOT"
+cd "$ROOT/terraform"
 
 MAX_RETRIES=3
 RETRY_WAIT=60

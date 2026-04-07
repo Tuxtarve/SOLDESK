@@ -32,13 +32,13 @@ jobs:
         with:
           filters: |
             event-svc:
-              - 'terraform/services/event-svc/**'
+              - 'services/event-svc/**'
             reserv-svc:
-              - 'terraform/services/reserv-svc/**'
+              - 'services/reserv-svc/**'
             worker-svc:
-              - 'terraform/services/worker-svc/**'
+              - 'services/worker-svc/**'
             frontend:
-              - 'terraform/frontend/**'
+              - 'frontend/**'
 
   # ── event-svc 빌드 & 배포 ─────────────────────────────────────────────────
   deploy-event-svc:
@@ -55,7 +55,7 @@ jobs:
       - name: ECR 로그인
         uses: aws-actions/amazon-ecr-login@v2
       - name: Docker 빌드 & ECR Push
-        working-directory: terraform/services/event-svc
+        working-directory: services/event-svc
         run: |
           IMAGE=${{ env.ECR_REGISTRY }}/ticketing/event-svc
           docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:latest .
@@ -85,7 +85,7 @@ jobs:
       - name: ECR 로그인
         uses: aws-actions/amazon-ecr-login@v2
       - name: Docker 빌드 & ECR Push
-        working-directory: terraform/services/reserv-svc
+        working-directory: services/reserv-svc
         run: |
           IMAGE=${{ env.ECR_REGISTRY }}/ticketing/reserv-svc
           docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:latest .
@@ -115,7 +115,7 @@ jobs:
       - name: ECR 로그인
         uses: aws-actions/amazon-ecr-login@v2
       - name: Docker 빌드 & ECR Push
-        working-directory: terraform/services/worker-svc
+        working-directory: services/worker-svc
         run: |
           IMAGE=${{ env.ECR_REGISTRY }}/ticketing/worker-svc
           docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:latest .
@@ -144,7 +144,7 @@ jobs:
           aws-region:     ${{ env.AWS_REGION }}
       - name: S3 업로드
         run: |
-          aws s3 sync terraform/frontend/src/ s3://${{ env.S3_FRONTEND_BUCKET }}/ \
+          aws s3 sync frontend/src/ s3://${{ env.S3_FRONTEND_BUCKET }}/ \
             --delete --cache-control "public, max-age=86400"
       - name: CloudFront 캐시 무효화
         run: |

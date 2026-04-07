@@ -4,7 +4,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TF_DIR="$ROOT"
+TF_DIR="$ROOT/terraform"
 cd "$TF_DIR"
 
 CLUSTER_NAME="$(terraform output -raw eks_cluster_name)"

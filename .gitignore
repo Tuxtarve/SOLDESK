@@ -38,8 +38,8 @@ Thumbs.db
 *.swp
 
 # 모니터링 환경변수
-terraform/monitoring-config/.env
-terraform/monitoring-config/grafana/data/
+monitoring/.env
+monitoring/grafana/data/
 
 # AWS 인증
 *.pem

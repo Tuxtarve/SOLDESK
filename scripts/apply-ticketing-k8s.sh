@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TF_DIR="$ROOT"
+TF_DIR="$ROOT/terraform"
 K8S="$ROOT/k8s"
 cd "$TF_DIR"
 
