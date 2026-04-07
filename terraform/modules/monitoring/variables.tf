@@ -5,3 +5,7 @@ variable "key_name" {
   type    = string
   default = ""
 }
+variable "redis_host" {
+  type        = string
+  description = "ElastiCache Redis endpoint for redis-exporter"
+}

@@ -60,12 +60,9 @@ ACCOUNT_ID="$(terraform output -raw aws_account_id)"
 REGION="$(terraform output -raw aws_region)"
 ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
 
-# Kustomize로 이미지 경로를 실제 ECR 레지스트리로 설정
+# kustomization.yaml의 이미지 경로를 실제 ECR 레지스트리로 갱신
 cd "$K8S"
-kustomize edit set image \
-  "ticketing/event-svc=${ECR_REGISTRY}/ticketing/event-svc:latest" \
-  "ticketing/reserv-svc=${ECR_REGISTRY}/ticketing/reserv-svc:latest" \
-  "ticketing/worker-svc=${ECR_REGISTRY}/ticketing/worker-svc:latest"
+sed -i "s|ACCOUNT_ID\.dkr\.ecr|${ACCOUNT_ID}.dkr.ecr|g" kustomization.yaml
 
 # ingress는 Cognito JSON 치환이 필요하므로 별도 적용
 kubectl apply -k . --prune -l app.kubernetes.io/part-of=ticketing 2>/dev/null || kubectl apply -k .

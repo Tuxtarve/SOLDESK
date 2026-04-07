@@ -110,9 +110,10 @@ module "monitoring" {
   subnet_id         = module.network.public_subnet_ids[0]
   security_group_id = module.network.monitoring_sg_id
   key_name          = var.key_name
+  redis_host        = module.elasticache.redis_endpoint
 
   # destroy 시 EC2가 네트워크(SG/서브넷)보다 먼저 삭제되도록 보장
-  depends_on = [module.network]
+  depends_on = [module.network, module.elasticache]
 }
 
 module "cicd" {
@@ -125,4 +126,26 @@ module "cicd" {
 }
 
 data "aws_caller_identity" "current" {}
+
+# EKS 노드가 실제 사용하는 클러스터 SG → RDS/Redis 접근 허용
+# (EKS는 vpc_config.security_group_ids 외에 자체 클러스터 SG를 자동 생성하여 노드에 할당)
+resource "aws_security_group_rule" "rds_from_eks_cluster_sg" {
+  type                     = "ingress"
+  description              = "MySQL from EKS cluster SG"
+  from_port                = 3306
+  to_port                  = 3306
+  protocol                 = "tcp"
+  security_group_id        = module.network.rds_sg_id
+  source_security_group_id = module.eks.cluster_security_group_id
+}
+
+resource "aws_security_group_rule" "redis_from_eks_cluster_sg" {
+  type                     = "ingress"
+  description              = "Redis from EKS cluster SG"
+  from_port                = 6379
+  to_port                  = 6379
+  protocol                 = "tcp"
+  security_group_id        = module.network.redis_sg_id
+  source_security_group_id = module.eks.cluster_security_group_id
+}
 

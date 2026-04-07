@@ -251,6 +251,16 @@ resource "aws_security_group_rule" "cache_from_was" {
   source_security_group_id = aws_security_group.was.id
 }
 
+resource "aws_security_group_rule" "cache_from_monitoring" {
+  type                     = "ingress"
+  description              = "Redis from Monitoring"
+  from_port                = 6379
+  to_port                  = 6379
+  protocol                 = "tcp"
+  security_group_id        = aws_security_group.cache.id
+  source_security_group_id = aws_security_group.web.id
+}
+
 # 설계도의 DB_Connection_Peering: 두 VPC 분리 시 사용. 현재 단일 VPC이므로 리소스 없음(문서화용 주석).
 
 data "aws_availability_zones" "available" {

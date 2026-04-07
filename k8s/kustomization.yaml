@@ -18,11 +18,11 @@ resources:
 # 사용법: kustomize edit set image ticketing/event-svc=123456789.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/event-svc:abc123
 images:
   - name: ticketing/event-svc
-    newName: ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/event-svc
+    newName: 734772058616.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/event-svc
     newTag: latest
   - name: ticketing/reserv-svc
-    newName: ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/reserv-svc
+    newName: 734772058616.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/reserv-svc
     newTag: latest
   - name: ticketing/worker-svc
-    newName: ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/worker-svc
+    newName: 734772058616.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/worker-svc
     newTag: latest

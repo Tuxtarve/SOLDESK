@@ -135,7 +135,7 @@ resource "aws_eks_node_group" "app" {
   node_group_name = "ticketing-app-nodes"
   node_role_arn   = aws_iam_role.eks_node.arn
   subnet_ids      = var.subnet_ids
-  instance_types  = ["t3.medium"]
+  instance_types  = ["t3.small"]
   ami_type        = "AL2023_x86_64_STANDARD"
 
   scaling_config {
