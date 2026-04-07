@@ -60,6 +60,11 @@ output "aws_account_id" {
   value = data.aws_caller_identity.current.account_id
 }
 
+output "cluster_autoscaler_role_arn" {
+  description = "IRSA role for cluster-autoscaler ServiceAccount"
+  value       = module.eks.cluster_autoscaler_role_arn
+}
+
 output "monitoring_ec2_ip" {
   value = module.monitoring.public_ip
 }
