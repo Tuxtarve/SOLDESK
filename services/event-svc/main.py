@@ -3,6 +3,7 @@ import json
 import signal
 import asyncio
 import logging
+from decimal import Decimal
 
 from fastapi import FastAPI, Request, Response
 from contextlib import asynccontextmanager
@@ -127,13 +128,15 @@ async def list_events():
                 """)
                 rows = await cur.fetchall()
 
-        # datetime 직렬화 처리
+        # datetime / Decimal 직렬화 처리
         for row in rows:
             for k, v in row.items():
                 if hasattr(v, "isoformat"):
                     row[k] = v.isoformat()
+                elif isinstance(v, Decimal):
+                    row[k] = float(v)
 
-        await redis_client.setex(cache_key, 30, json.dumps(rows))
+        await redis_client.setex(cache_key, 30, json.dumps(rows, default=str))
         return rows
     except Exception as e:
         log.error("이벤트 목록 조회 실패: %s", e)

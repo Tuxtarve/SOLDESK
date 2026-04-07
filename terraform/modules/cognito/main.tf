@@ -23,17 +23,60 @@ resource "aws_cognito_user_pool" "main" {
     }
   }
 
-  email_configuration {
-    email_sending_account = "COGNITO_DEFAULT"
-  }
-
-  verification_message_template {
-    default_email_option = "CONFIRM_WITH_CODE"
-    email_subject        = "[티켓팅] 이메일 인증 코드"
-    email_message        = "인증 코드: {####}"
+  lambda_config {
+    pre_sign_up = aws_lambda_function.auto_confirm.arn
   }
 
   tags = { Name = "${var.app_name}-user-pool", Environment = var.env }
+}
+
+# 회원가입 시 이메일 인증 없이 자동 확인하는 Lambda
+resource "aws_lambda_function" "auto_confirm" {
+  function_name = "${var.app_name}-auto-confirm"
+  runtime       = "python3.12"
+  handler       = "index.handler"
+  role          = aws_iam_role.lambda_auto_confirm.arn
+  filename      = data.archive_file.auto_confirm.output_path
+  source_code_hash = data.archive_file.auto_confirm.output_base64sha256
+}
+
+data "archive_file" "auto_confirm" {
+  type        = "zip"
+  output_path = "${path.module}/auto_confirm.zip"
+  source {
+    content  = <<-PYTHON
+def handler(event, context):
+    event['response']['autoConfirmUser'] = True
+    event['response']['autoVerifyEmail'] = True
+    return event
+PYTHON
+    filename = "index.py"
+  }
+}
+
+resource "aws_iam_role" "lambda_auto_confirm" {
+  name = "${var.app_name}-auto-confirm-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_basic" {
+  role       = aws_iam_role.lambda_auto_confirm.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+resource "aws_lambda_permission" "cognito_invoke" {
+  statement_id  = "AllowCognitoInvoke"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.auto_confirm.function_name
+  principal     = "cognito-idp.amazonaws.com"
+  source_arn    = aws_cognito_user_pool.main.arn
 }
 
 resource "aws_cognito_user_pool_client" "web" {
