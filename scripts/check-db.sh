@@ -1,0 +1,30 @@
+#!/bin/bash
+# DB 전체 조회 스크립트
+# 사용법: bash scripts/check-db.sh
+
+kubectl exec deployment/reserv-svc -n ticketing -- sh -c 'cat << "PYEOF" > /tmp/ck.py
+import pymysql, os
+conn = pymysql.connect(host=os.environ["DB_READER_HOST"], user=os.environ["DB_USER"], password=os.environ["DB_PASSWORD"], db="ticketing")
+cur = conn.cursor()
+print("=== 공연 목록 ===")
+cur.execute("SELECT id, title, venue, start_at, total_seats, status FROM events")
+for r in cur.fetchall(): print(r)
+print()
+print("=== 좌석 상태 요약 ===")
+cur.execute("SELECT event_id, status, COUNT(*) FROM seats GROUP BY event_id, status ORDER BY event_id, status")
+for r in cur.fetchall(): print(r)
+print()
+print("=== 예매 내역 ===")
+cur.execute("SELECT r.id, r.status, r.total_price, r.created_at, e.title FROM reservations r JOIN events e ON r.event_id = e.id ORDER BY r.created_at DESC")
+for r in cur.fetchall(): print(r)
+print()
+print("=== 예매-좌석 매핑 ===")
+cur.execute("SELECT rs.reservation_id, s.section, s.row, s.number, s.grade, s.price, s.status FROM reservation_seats rs JOIN seats s ON rs.seat_id = s.id")
+for r in cur.fetchall(): print(r)
+print()
+print("=== 결제 내역 ===")
+cur.execute("SELECT reservation_id, amount, method, status, paid_at FROM payments ORDER BY created_at DESC")
+for r in cur.fetchall(): print(r)
+conn.close()
+PYEOF
+python /tmp/ck.py'
