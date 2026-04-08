@@ -39,11 +39,18 @@ resource "null_resource" "cleanup_k8s_resources" {
       if [ "$VPC_ID" != "None" ] && [ -n "$VPC_ID" ]; then
         echo "Cleaning up leftover ELBs in VPC $VPC_ID..."
 
-        # Classic + ALB/NLB 정리
+        # ALB/NLB 정리
         for LB_ARN in $(aws elbv2 describe-load-balancers --region ${self.triggers.region} \
           --query "LoadBalancers[?VpcId=='$VPC_ID'].LoadBalancerArn" --output text 2>/dev/null); do
           echo "Deleting load balancer: $LB_ARN"
           aws elbv2 delete-load-balancer --load-balancer-arn "$LB_ARN" --region ${self.triggers.region} 2>/dev/null || true
+        done
+
+        # Classic ELB 정리
+        for CLB_NAME in $(aws elb describe-load-balancers --region ${self.triggers.region} \
+          --query "LoadBalancerDescriptions[?VPCId=='$VPC_ID'].LoadBalancerName" --output text 2>/dev/null); do
+          echo "Deleting classic LB: $CLB_NAME"
+          aws elb delete-load-balancer --load-balancer-name "$CLB_NAME" --region ${self.triggers.region} 2>/dev/null || true
         done
 
         # Target Group 정리
@@ -55,6 +62,52 @@ resource "null_resource" "cleanup_k8s_resources" {
 
         echo "Waiting 30s for ENIs to detach..."
         sleep 30
+
+        # in-use ENI 분리 후 삭제 (ELB/k8s가 남긴 것)
+        echo "Cleaning up leftover ENIs in VPC $VPC_ID..."
+        for ENI_ID in $(aws ec2 describe-network-interfaces --region ${self.triggers.region} \
+          --filters "Name=vpc-id,Values=$VPC_ID" \
+          --query "NetworkInterfaces[?Description!=null && !starts_with(Description,'Amazon ')].NetworkInterfaceId" \
+          --output text 2>/dev/null); do
+          # in-use 상태면 먼저 분리
+          ATTACH_ID=$(aws ec2 describe-network-interfaces --region ${self.triggers.region} \
+            --network-interface-ids "$ENI_ID" \
+            --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text 2>/dev/null)
+          if [ "$ATTACH_ID" != "None" ] && [ -n "$ATTACH_ID" ]; then
+            echo "Detaching ENI: $ENI_ID"
+            aws ec2 detach-network-interface --attachment-id "$ATTACH_ID" --force --region ${self.triggers.region} 2>/dev/null || true
+          fi
+        done
+        sleep 10
+        for ENI_ID in $(aws ec2 describe-network-interfaces --region ${self.triggers.region} \
+          --filters "Name=vpc-id,Values=$VPC_ID" "Name=status,Values=available" \
+          --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text 2>/dev/null); do
+          echo "Deleting ENI: $ENI_ID"
+          aws ec2 delete-network-interface --network-interface-id "$ENI_ID" --region ${self.triggers.region} 2>/dev/null || true
+        done
+
+        # k8s가 생성한 보안 그룹 정리 (default SG 제외)
+        # 상호 참조 규칙을 먼저 제거해야 삭제 가능
+        echo "Cleaning up k8s-created security groups in VPC $VPC_ID..."
+        K8S_SGS=$(aws ec2 describe-security-groups --region ${self.triggers.region} \
+          --filters "Name=vpc-id,Values=$VPC_ID" \
+          --query "SecurityGroups[?GroupName!='default' && (contains(GroupName,'k8s-') || contains(GroupName,'eks-cluster-sg-'))].GroupId" \
+          --output text 2>/dev/null)
+        # 1단계: 모든 인바운드/아웃바운드 규칙 제거 (상호 참조 해소)
+        for SG_ID in $K8S_SGS; do
+          echo "Revoking rules for SG: $SG_ID"
+          aws ec2 revoke-security-group-ingress --group-id "$SG_ID" --region ${self.triggers.region} \
+            --ip-permissions "$(aws ec2 describe-security-groups --group-ids "$SG_ID" --region ${self.triggers.region} \
+            --query 'SecurityGroups[0].IpPermissions' --output json 2>/dev/null)" 2>/dev/null || true
+          aws ec2 revoke-security-group-egress --group-id "$SG_ID" --region ${self.triggers.region} \
+            --ip-permissions "$(aws ec2 describe-security-groups --group-ids "$SG_ID" --region ${self.triggers.region} \
+            --query 'SecurityGroups[0].IpPermissionsEgress' --output json 2>/dev/null)" 2>/dev/null || true
+        done
+        # 2단계: 보안 그룹 삭제
+        for SG_ID in $K8S_SGS; do
+          echo "Deleting security group: $SG_ID"
+          aws ec2 delete-security-group --group-id "$SG_ID" --region ${self.triggers.region} 2>/dev/null || true
+        done
       fi
 
       echo "=== Cleanup complete ==="
