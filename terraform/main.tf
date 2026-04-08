@@ -96,6 +96,7 @@ module "eks" {
   source            = "./modules/eks"
   env               = var.env
   aws_region        = var.aws_region
+  vpc_id            = module.network.vpc_id
   subnet_ids        = module.network.public_subnet_ids
   security_group_id = module.network.eks_sg_id
   cluster_name      = var.eks_cluster_name

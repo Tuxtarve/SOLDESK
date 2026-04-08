@@ -5,6 +5,7 @@ resource "null_resource" "cleanup_k8s_resources" {
   triggers = {
     cluster_name = var.cluster_name
     region       = var.aws_region
+    vpc_id       = var.vpc_id
   }
 
   depends_on = [
@@ -32,11 +33,9 @@ resource "null_resource" "cleanup_k8s_resources" {
       fi
 
       # 클러스터 접근 불가 시 직접 정리: VPC 내 남은 ELB 삭제
-      VPC_ID=$(aws ec2 describe-vpcs --region ${self.triggers.region} \
-        --filters "Name=tag:kubernetes.io/cluster/${self.triggers.cluster_name},Values=owned,shared" \
-        --query 'Vpcs[0].VpcId' --output text 2>/dev/null || echo "None")
+      VPC_ID="${self.triggers.vpc_id}"
 
-      if [ "$VPC_ID" != "None" ] && [ -n "$VPC_ID" ]; then
+      if [ -n "$VPC_ID" ]; then
         echo "Cleaning up leftover ELBs in VPC $VPC_ID..."
 
         # ALB/NLB 정리
@@ -63,11 +62,41 @@ resource "null_resource" "cleanup_k8s_resources" {
         echo "Waiting 30s for ENIs to detach..."
         sleep 30
 
-        # in-use ENI 분리 후 삭제 (ELB/k8s가 남긴 것)
+        # EIP 해제 (IGW detach 차단 원인 — "mapped public address(es)")
+        echo "Releasing Elastic IPs in VPC $VPC_ID..."
+        for ALLOC_ID in $(aws ec2 describe-addresses --region ${self.triggers.region} \
+          --filters "Name=domain,Values=vpc" \
+          --query "Addresses[?NetworkInterfaceId!=null].{A:AllocationId,N:NetworkInterfaceId}" \
+          --output text 2>/dev/null | while read AID NID; do
+            # 이 EIP가 VPC 내 ENI에 연결되었는지 확인
+            ENI_VPC=$(aws ec2 describe-network-interfaces --region ${self.triggers.region} \
+              --network-interface-ids "$NID" \
+              --query 'NetworkInterfaces[0].VpcId' --output text 2>/dev/null)
+            if [ "$ENI_VPC" = "$VPC_ID" ]; then echo "$AID"; fi
+          done); do
+          echo "Disassociating and releasing EIP: $ALLOC_ID"
+          ASSOC_ID=$(aws ec2 describe-addresses --region ${self.triggers.region} \
+            --allocation-ids "$ALLOC_ID" \
+            --query 'Addresses[0].AssociationId' --output text 2>/dev/null)
+          if [ "$ASSOC_ID" != "None" ] && [ -n "$ASSOC_ID" ]; then
+            aws ec2 disassociate-address --association-id "$ASSOC_ID" --region ${self.triggers.region} 2>/dev/null || true
+          fi
+          aws ec2 release-address --allocation-id "$ALLOC_ID" --region ${self.triggers.region} 2>/dev/null || true
+        done
+
+        # 연결되지 않은(미사용) EIP도 정리
+        for ALLOC_ID in $(aws ec2 describe-addresses --region ${self.triggers.region} \
+          --filters "Name=domain,Values=vpc" \
+          --query "Addresses[?AssociationId==null].AllocationId" --output text 2>/dev/null); do
+          echo "Releasing unused EIP: $ALLOC_ID"
+          aws ec2 release-address --allocation-id "$ALLOC_ID" --region ${self.triggers.region} 2>/dev/null || true
+        done
+
+        # in-use ENI 분리 후 삭제 (ELB/k8s가 남긴 것 — 프라이머리 ENI 제외)
         echo "Cleaning up leftover ENIs in VPC $VPC_ID..."
         for ENI_ID in $(aws ec2 describe-network-interfaces --region ${self.triggers.region} \
           --filters "Name=vpc-id,Values=$VPC_ID" \
-          --query "NetworkInterfaces[?Description!=null && !starts_with(Description,'Amazon ')].NetworkInterfaceId" \
+          --query "NetworkInterfaces[?Attachment.DeviceIndex!=\`0\` || Attachment.AttachmentId==null].NetworkInterfaceId" \
           --output text 2>/dev/null); do
           # in-use 상태면 먼저 분리
           ATTACH_ID=$(aws ec2 describe-network-interfaces --region ${self.triggers.region} \
@@ -78,7 +107,7 @@ resource "null_resource" "cleanup_k8s_resources" {
             aws ec2 detach-network-interface --attachment-id "$ATTACH_ID" --force --region ${self.triggers.region} 2>/dev/null || true
           fi
         done
-        sleep 10
+        sleep 15
         for ENI_ID in $(aws ec2 describe-network-interfaces --region ${self.triggers.region} \
           --filters "Name=vpc-id,Values=$VPC_ID" "Name=status,Values=available" \
           --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text 2>/dev/null); do
@@ -88,10 +117,10 @@ resource "null_resource" "cleanup_k8s_resources" {
 
         # k8s가 생성한 보안 그룹 정리 (default SG 제외)
         # 상호 참조 규칙을 먼저 제거해야 삭제 가능
-        echo "Cleaning up k8s-created security groups in VPC $VPC_ID..."
+        echo "Cleaning up non-default security groups in VPC $VPC_ID..."
         K8S_SGS=$(aws ec2 describe-security-groups --region ${self.triggers.region} \
           --filters "Name=vpc-id,Values=$VPC_ID" \
-          --query "SecurityGroups[?GroupName!='default' && (contains(GroupName,'k8s-') || contains(GroupName,'eks-cluster-sg-'))].GroupId" \
+          --query "SecurityGroups[?GroupName!='default'].GroupId" \
           --output text 2>/dev/null)
         # 1단계: 모든 인바운드/아웃바운드 규칙 제거 (상호 참조 해소)
         for SG_ID in $K8S_SGS; do
