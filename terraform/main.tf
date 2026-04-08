@@ -92,6 +92,77 @@ module "rds" {
   depends_on = [module.network]
 }
 
+# ── EKS 삭제 후 VPC 고아 리소스 정리 ──────────────────────────────
+# Destroy 순서: module.eks → post_eks_vpc_cleanup → module.network
+# EKS 삭제 후 K8s 컨트롤러가 남긴 보안그룹·ENI를 제거하여 VPC 삭제 hang 영구 방지
+resource "null_resource" "post_eks_vpc_cleanup" {
+  triggers = {
+    vpc_id = module.network.vpc_id
+    region = var.aws_region
+  }
+
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      echo "=== Post-EKS VPC cleanup: K8s 고아 리소스 제거 ==="
+      VPC_ID="${self.triggers.vpc_id}"
+      REGION="${self.triggers.region}"
+      [ -z "$VPC_ID" ] && exit 0
+
+      # K8s/EKS가 생성한 보안 그룹 (k8s-*, eks-cluster-sg-*)
+      K8S_SGS=$(aws ec2 describe-security-groups --region "$REGION" \
+        --filters "Name=vpc-id,Values=$VPC_ID" "Name=group-name,Values=k8s-*,eks-cluster-sg-*" \
+        --query 'SecurityGroups[*].GroupId' --output text 2>/dev/null)
+
+      if [ -n "$K8S_SGS" ] && [ "$K8S_SGS" != "None" ]; then
+        echo "고아 보안 그룹 발견: $K8S_SGS"
+        # 1단계: 상호 참조 규칙 제거
+        for SG_ID in $K8S_SGS; do
+          INGRESS=$(aws ec2 describe-security-groups --group-ids "$SG_ID" --region "$REGION" \
+            --query 'SecurityGroups[0].IpPermissions' --output json 2>/dev/null)
+          if [ "$INGRESS" != "[]" ] && [ -n "$INGRESS" ]; then
+            aws ec2 revoke-security-group-ingress --group-id "$SG_ID" --ip-permissions "$INGRESS" --region "$REGION" 2>/dev/null || true
+          fi
+          EGRESS=$(aws ec2 describe-security-groups --group-ids "$SG_ID" --region "$REGION" \
+            --query 'SecurityGroups[0].IpPermissionsEgress' --output json 2>/dev/null)
+          if [ "$EGRESS" != "[]" ] && [ -n "$EGRESS" ]; then
+            aws ec2 revoke-security-group-egress --group-id "$SG_ID" --ip-permissions "$EGRESS" --region "$REGION" 2>/dev/null || true
+          fi
+        done
+        # 2단계: 보안 그룹 삭제
+        for SG_ID in $K8S_SGS; do
+          echo "  삭제: $SG_ID"
+          aws ec2 delete-security-group --group-id "$SG_ID" --region "$REGION" 2>/dev/null || true
+        done
+      else
+        echo "정리할 고아 보안 그룹 없음"
+      fi
+
+      # 고아 ENI 분리 및 삭제
+      for ENI_ID in $(aws ec2 describe-network-interfaces --region "$REGION" \
+        --filters "Name=vpc-id,Values=$VPC_ID" \
+        --query "NetworkInterfaces[?Attachment.DeviceIndex!=\`0\`].NetworkInterfaceId" \
+        --output text 2>/dev/null); do
+        ATTACH_ID=$(aws ec2 describe-network-interfaces --region "$REGION" \
+          --network-interface-ids "$ENI_ID" \
+          --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text 2>/dev/null)
+        if [ "$ATTACH_ID" != "None" ] && [ -n "$ATTACH_ID" ]; then
+          aws ec2 detach-network-interface --attachment-id "$ATTACH_ID" --force --region "$REGION" 2>/dev/null || true
+        fi
+      done
+      sleep 10
+      for ENI_ID in $(aws ec2 describe-network-interfaces --region "$REGION" \
+        --filters "Name=vpc-id,Values=$VPC_ID" "Name=status,Values=available" \
+        --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text 2>/dev/null); do
+        echo "  ENI 삭제: $ENI_ID"
+        aws ec2 delete-network-interface --network-interface-id "$ENI_ID" --region "$REGION" 2>/dev/null || true
+      done
+
+      echo "=== Post-EKS VPC cleanup 완료 ==="
+    EOT
+  }
+}
+
 module "eks" {
   source            = "./modules/eks"
   env               = var.env
@@ -102,8 +173,8 @@ module "eks" {
   cluster_name      = var.eks_cluster_name
   sqs_queue_arns    = [module.sqs.reservation_queue_arn, module.sqs.reservation_dlq_arn]
 
-  # destroy 시 EKS가 네트워크(SG/서브넷)보다 먼저 삭제되도록 보장
-  depends_on = [module.network]
+  # destroy 순서: module.eks → post_eks_vpc_cleanup → module.network
+  depends_on = [module.network, null_resource.post_eks_vpc_cleanup]
 }
 
 module "monitoring" {

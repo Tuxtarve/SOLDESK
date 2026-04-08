@@ -2,6 +2,10 @@
 # terraform destroy 래퍼 스크립트
 # EKS/ALB Controller가 Terraform 외부에서 생성한 리소스(EIP, ELB, TG, ENI, SG)를
 # 자동 감지·정리하여 VPC/IGW/Subnet 삭제 실패를 영구적으로 방지한다.
+#
+# 2중 안전장치:
+#   1) Terraform null_resource.post_eks_vpc_cleanup — EKS 삭제 후 VPC 삭제 전에 실행
+#   2) 이 스크립트의 백그라운드 정리 루프 — terraform destroy 실행 중 주기적으로 고아 리소스 제거
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -12,13 +16,11 @@ REGION=$(terraform output -raw aws_region 2>/dev/null || echo "ap-northeast-2")
 
 # ── VPC ID 확인 ──────────────────────────────────────────────────
 get_vpc_id() {
-  # 1순위: terraform state
   local vpc_id
   vpc_id=$(terraform state show 'module.network.aws_vpc.main' 2>/dev/null \
     | grep '^\s*id\s*=' | head -1 | sed 's/.*= *"//;s/".*//')
   if [ -n "$vpc_id" ]; then echo "$vpc_id"; return; fi
 
-  # 2순위: 태그로 검색
   vpc_id=$(aws ec2 describe-vpcs --region "$REGION" \
     --filters "Name=tag:Name,Values=Public_VPC" \
     --query 'Vpcs[0].VpcId' --output text 2>/dev/null)
@@ -27,7 +29,47 @@ get_vpc_id() {
   echo ""
 }
 
-# ── VPC 내 모든 외부 생성 리소스 정리 ────────────────────────────
+# ── K8s 고아 리소스만 정리 (경량 — 백그라운드 루프용) ────────────
+cleanup_k8s_orphans() {
+  local vpc_id="$1"
+  [ -z "$vpc_id" ] && return 0
+
+  # K8s/EKS가 생성한 보안 그룹 (k8s-*, eks-cluster-sg-*)
+  local k8s_sgs
+  k8s_sgs=$(aws ec2 describe-security-groups --region "$REGION" \
+    --filters "Name=vpc-id,Values=$vpc_id" "Name=group-name,Values=k8s-*,eks-cluster-sg-*" \
+    --query 'SecurityGroups[*].GroupId' --output text 2>/dev/null)
+
+  if [ -n "$k8s_sgs" ] && [ "$k8s_sgs" != "None" ]; then
+    echo "[bg-cleanup] 고아 SG 발견: $k8s_sgs"
+    for SG_ID in $k8s_sgs; do
+      INGRESS=$(aws ec2 describe-security-groups --group-ids "$SG_ID" --region "$REGION" \
+        --query 'SecurityGroups[0].IpPermissions' --output json 2>/dev/null)
+      if [ "$INGRESS" != "[]" ] && [ -n "$INGRESS" ]; then
+        aws ec2 revoke-security-group-ingress --group-id "$SG_ID" --ip-permissions "$INGRESS" --region "$REGION" 2>/dev/null || true
+      fi
+      EGRESS=$(aws ec2 describe-security-groups --group-ids "$SG_ID" --region "$REGION" \
+        --query 'SecurityGroups[0].IpPermissionsEgress' --output json 2>/dev/null)
+      if [ "$EGRESS" != "[]" ] && [ -n "$EGRESS" ]; then
+        aws ec2 revoke-security-group-egress --group-id "$SG_ID" --ip-permissions "$EGRESS" --region "$REGION" 2>/dev/null || true
+      fi
+    done
+    for SG_ID in $k8s_sgs; do
+      echo "[bg-cleanup] SG 삭제: $SG_ID"
+      aws ec2 delete-security-group --group-id "$SG_ID" --region "$REGION" 2>/dev/null || true
+    done
+  fi
+
+  # 고아 ENI 정리
+  for ENI_ID in $(aws ec2 describe-network-interfaces --region "$REGION" \
+    --filters "Name=vpc-id,Values=$vpc_id" "Name=status,Values=available" \
+    --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text 2>/dev/null); do
+    echo "[bg-cleanup] ENI 삭제: $ENI_ID"
+    aws ec2 delete-network-interface --network-interface-id "$ENI_ID" --region "$REGION" 2>/dev/null || true
+  done
+}
+
+# ── VPC 내 모든 외부 생성 리소스 정리 (전체 — 사전/사후 정리용) ──
 cleanup_vpc() {
   local vpc_id="$1"
   if [ -z "$vpc_id" ]; then
@@ -38,14 +80,13 @@ cleanup_vpc() {
   echo " VPC 정리 시작: $vpc_id"
   echo "============================================="
 
-  # ① EIP 해제 — IGW detach 차단의 근본 원인
+  # 1) EIP 해제
   echo ">> [1/6] Elastic IP 해제"
   aws ec2 describe-addresses --region "$REGION" \
     --filters "Name=domain,Values=vpc" \
     --query 'Addresses[*].[AllocationId,AssociationId,NetworkInterfaceId]' \
     --output text 2>/dev/null | while read -r ALLOC_ID ASSOC_ID NID; do
     [ -z "$ALLOC_ID" ] && continue
-    # VPC 내 ENI에 연결된 EIP만 대상
     if [ "$NID" != "None" ] && [ -n "$NID" ]; then
       ENI_VPC=$(aws ec2 describe-network-interfaces --region "$REGION" \
         --network-interface-ids "$NID" \
@@ -60,7 +101,7 @@ cleanup_vpc() {
     aws ec2 release-address --allocation-id "$ALLOC_ID" --region "$REGION" 2>/dev/null || true
   done
 
-  # ② ALB / NLB 삭제
+  # 2) ALB / NLB 삭제
   echo ">> [2/6] ALB/NLB 삭제"
   for LB_ARN in $(aws elbv2 describe-load-balancers --region "$REGION" \
     --query "LoadBalancers[?VpcId=='$vpc_id'].LoadBalancerArn" --output text 2>/dev/null); do
@@ -68,7 +109,7 @@ cleanup_vpc() {
     aws elbv2 delete-load-balancer --load-balancer-arn "$LB_ARN" --region "$REGION" 2>/dev/null || true
   done
 
-  # ③ Classic ELB 삭제
+  # 3) Classic ELB 삭제
   echo ">> [3/6] Classic ELB 삭제"
   for CLB in $(aws elb describe-load-balancers --region "$REGION" \
     --query "LoadBalancerDescriptions[?VPCId=='$vpc_id'].LoadBalancerName" --output text 2>/dev/null); do
@@ -76,7 +117,7 @@ cleanup_vpc() {
     aws elb delete-load-balancer --load-balancer-name "$CLB" --region "$REGION" 2>/dev/null || true
   done
 
-  # ④ Target Group 삭제
+  # 4) Target Group 삭제
   echo ">> [4/6] Target Group 삭제"
   for TG_ARN in $(aws elbv2 describe-target-groups --region "$REGION" \
     --query "TargetGroups[?VpcId=='$vpc_id'].TargetGroupArn" --output text 2>/dev/null); do
@@ -84,11 +125,10 @@ cleanup_vpc() {
     aws elbv2 delete-target-group --target-group-arn "$TG_ARN" --region "$REGION" 2>/dev/null || true
   done
 
-  # LB 삭제 후 ENI 해제 대기
   echo "   (ENI 해제 대기 20초)"
   sleep 20
 
-  # ⑤ ENI 분리 → 삭제 (프라이머리 ENI 제외)
+  # 5) ENI 분리 → 삭제
   echo ">> [5/6] ENI 분리 및 삭제"
   for ENI_ID in $(aws ec2 describe-network-interfaces --region "$REGION" \
     --filters "Name=vpc-id,Values=$vpc_id" \
@@ -110,7 +150,7 @@ cleanup_vpc() {
     aws ec2 delete-network-interface --network-interface-id "$ENI_ID" --region "$REGION" 2>/dev/null || true
   done
 
-  # ⑥ k8s 생성 보안그룹 정리 (상호 참조 규칙 → SG 삭제)
+  # 6) non-default 보안그룹 전체 정리
   echo ">> [6/6] non-default 보안그룹 전체 정리"
   K8S_SGS=$(aws ec2 describe-security-groups --region "$REGION" \
     --filters "Name=vpc-id,Values=$vpc_id" \
@@ -149,16 +189,29 @@ attempt=1
 while [ $attempt -le $MAX_RETRIES ]; do
   echo ""
   echo "=== terraform destroy 시도 $attempt / $MAX_RETRIES ==="
+
+  # 백그라운드 정리 루프 시작 (30초마다 고아 SG/ENI 제거)
+  # terraform destroy가 VPC 삭제에서 hang할 때 이 루프가 차단 리소스를 제거해줌
+  (
+    sleep 60  # EKS 삭제 완료될 시간 확보
+    while true; do
+      cleanup_k8s_orphans "$VPC_ID" 2>/dev/null
+      sleep 30
+    done
+  ) &
+  BG_PID=$!
+
   if terraform destroy "$@" 2>&1 | tee /tmp/tf_destroy_output.log; then
+    kill $BG_PID 2>/dev/null; wait $BG_PID 2>/dev/null
     echo "=== destroy 완료 ==="
     rm -f /tmp/tf_destroy_output.log
     exit 0
   fi
 
+  kill $BG_PID 2>/dev/null; wait $BG_PID 2>/dev/null
   echo "=== destroy 실패 ==="
 
   if [ $attempt -lt $MAX_RETRIES ]; then
-    # 에러 출력에서 VPC ID 자동 추출 (변경되었을 수 있으므로)
     FAILED_VPC=$(grep -oP 'vpc-[0-9a-f]+' /tmp/tf_destroy_output.log 2>/dev/null | head -1)
     CLEANUP_TARGET="${FAILED_VPC:-$VPC_ID}"
 
