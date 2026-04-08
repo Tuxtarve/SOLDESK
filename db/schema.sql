@@ -67,7 +67,7 @@ CREATE TABLE IF NOT EXISTS payments (
   FOREIGN KEY (reservation_id) REFERENCES reservations(id)
 ) ENGINE=InnoDB;
 
--- 인덱스
+-- 인덱스 (재실행 안전 — 이미 존재하면 무시, mysql --force 필요)
 CREATE INDEX idx_seats_event    ON seats(event_id, status);
 CREATE INDEX idx_reserv_user    ON reservations(user_id, status);
 CREATE INDEX idx_reserv_event   ON reservations(event_id, status);

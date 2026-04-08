@@ -66,10 +66,10 @@ echo "MySQL 클라이언트 파드 대기 중..."
 kubectl wait --for=condition=Ready pod/mysql-init -n ticketing --timeout=120s
 
 cat "$ROOT/db/schema.sql" | kubectl exec -i mysql-init -n ticketing -- \
-  mysql --default-character-set=utf8mb4 -h "$DB_WRITER_HOST" -u root -p"$DB_PASSWORD" 2>/dev/null
+  mysql --force --default-character-set=utf8mb4 -h "$DB_WRITER_HOST" -u root -p"$DB_PASSWORD" 2>&1 || true
 
 cat "$ROOT/db/seed.sql" | kubectl exec -i mysql-init -n ticketing -- \
-  mysql --default-character-set=utf8mb4 -h "$DB_WRITER_HOST" -u root -p"$DB_PASSWORD" 2>/dev/null
+  mysql --default-character-set=utf8mb4 -h "$DB_WRITER_HOST" -u root -p"$DB_PASSWORD" 2>&1 || true
 
 kubectl delete pod mysql-init -n ticketing --wait=false
 echo "DB 스키마 + 시드 데이터 적용 완료"
@@ -138,12 +138,16 @@ else
     --output text)"
 
   CF_ETAG="$(aws cloudfront get-distribution-config --id "$CF_DIST_ID" --query 'ETag' --output text)"
-  aws cloudfront get-distribution-config --id "$CF_DIST_ID" --query 'DistributionConfig' > /tmp/cf-cfg.json
+  CF_CFG="$ROOT/.cf-cfg.json"
+  CF_CFG_UPDATED="$ROOT/.cf-cfg-updated.json"
+  aws cloudfront get-distribution-config --id "$CF_DIST_ID" --query 'DistributionConfig' > "$CF_CFG"
 
   node -e "
     const fs = require('fs');
-    const cfg = JSON.parse(fs.readFileSync('/tmp/cf-cfg.json'.replace(/\//g, require('path').sep), 'utf8'));
-    const albDns = process.argv[1];
+    const cfgPath = process.argv[1];
+    const outPath = process.argv[2];
+    const albDns  = process.argv[3];
+    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
 
     if (!cfg.Origins.Items.some(o => o.Id === 'ALB-api')) {
       cfg.Origins.Items.push({
@@ -177,13 +181,17 @@ else
       cfg.CacheBehaviors.Quantity = cfg.CacheBehaviors.Items.length;
     }
 
-    fs.writeFileSync('/tmp/cf-cfg-updated.json'.replace(/\//g, require('path').sep), JSON.stringify(cfg));
+    fs.writeFileSync(outPath, JSON.stringify(cfg));
     console.log('CloudFront config updated');
-  " "$ALB_ADDRESS"
+  " "$(cygpath -w "$CF_CFG" 2>/dev/null || echo "$CF_CFG")" \
+    "$(cygpath -w "$CF_CFG_UPDATED" 2>/dev/null || echo "$CF_CFG_UPDATED")" \
+    "$ALB_ADDRESS"
 
+  CF_CFG_UPDATED_WIN="$(cygpath -w "$CF_CFG_UPDATED" 2>/dev/null || echo "$CF_CFG_UPDATED")"
   aws cloudfront update-distribution --id "$CF_DIST_ID" \
-    --distribution-config file:///tmp/cf-cfg-updated.json \
+    --distribution-config "file://$CF_CFG_UPDATED_WIN" \
     --if-match "$CF_ETAG" --query "Distribution.Status" --output text
+  rm -f "$CF_CFG" "$CF_CFG_UPDATED"
   echo "CloudFront ALB 라우팅 설정 완료 (전파 3~5분 소요)"
 fi
 
