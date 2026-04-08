@@ -69,6 +69,21 @@ output "monitoring_ec2_ip" {
   value = module.monitoring.public_ip
 }
 
+output "prometheus_url" {
+  description = "Prometheus Web UI"
+  value       = "http://${module.monitoring.public_ip}:9090"
+}
+
+output "grafana_url" {
+  description = "Grafana Dashboard (root / admin1234)"
+  value       = "http://${module.monitoring.public_ip}:3000"
+}
+
+output "alertmanager_url" {
+  description = "Alertmanager Web UI"
+  value       = "http://${module.monitoring.public_ip}:9093"
+}
+
 output "github_actions_role_arn" {
   value = module.cicd.github_actions_role_arn
 }

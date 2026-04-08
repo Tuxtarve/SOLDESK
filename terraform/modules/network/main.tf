@@ -179,28 +179,35 @@ resource "aws_security_group" "was" {
   }
 }
 
-# DB_SG: MySQL — 별도 SG 규칙으로 분리하여 순환 참조 방지
+# DB_SG: MySQL — 인라인 규칙 제거, 모두 aws_security_group_rule로 관리
 resource "aws_security_group" "db" {
   name        = "prod-rds-sg"
   vpc_id      = aws_vpc.main.id
   description = "RDS Aurora SG - allow from EKS only"
 
-  ingress {
-    from_port   = -1
-    to_port     = -1
-    protocol    = "icmp"
-    cidr_blocks = ["10.0.0.0/16"]
-  }
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
   tags = {
     Name        = "DB_SG"
     Environment = var.env
   }
+}
+
+resource "aws_security_group_rule" "db_icmp" {
+  type              = "ingress"
+  description       = "ICMP from VPC"
+  from_port         = -1
+  to_port           = -1
+  protocol          = "icmp"
+  security_group_id = aws_security_group.db.id
+  cidr_blocks       = ["10.0.0.0/16"]
+}
+
+resource "aws_security_group_rule" "db_egress_all" {
+  type              = "egress"
+  from_port         = 0
+  to_port           = 0
+  protocol          = "-1"
+  security_group_id = aws_security_group.db.id
+  cidr_blocks       = ["0.0.0.0/0"]
 }
 
 resource "aws_security_group_rule" "db_from_was" {
