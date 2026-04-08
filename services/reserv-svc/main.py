@@ -1,8 +1,10 @@
 import os
 import json
 import uuid
+import hashlib
 import logging
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 
 from fastapi import FastAPI, Request, Response
 from contextlib import asynccontextmanager
@@ -57,6 +59,19 @@ async def lifespan(app: FastAPI):
         port=int(os.getenv("REDIS_PORT", "6379")),
         decode_responses=True,
     )
+    # Redis 좌석 재고 초기화 (DB 기준)
+    async with reader_pool.acquire() as conn:
+        async with conn.cursor(aiomysql.DictCursor) as cur:
+            await cur.execute(
+                "SELECT event_id, COUNT(*) AS cnt FROM seats "
+                "WHERE status = 'AVAILABLE' GROUP BY event_id"
+            )
+            for row in await cur.fetchall():
+                key = f"seat:available:{row['event_id']}"
+                await redis_client.set(key, row["cnt"])
+                seat_available.labels(event_id=row["event_id"]).set(row["cnt"])
+                log.info("Redis 좌석 재고 초기화: %s = %s", key, row["cnt"])
+
     log.info("reserv-svc 시작, port=%s", os.getenv("PORT", "3001"))
     yield
 
@@ -132,7 +147,8 @@ async def create_reservation(request: Request):
         seat_available.labels(event_id=event_id).set(remaining)
 
         reservation_id = str(uuid.uuid4())
-        idempotency_key = f"{user_id}:{event_id}:{','.join(seat_ids_sorted)}"
+        raw_key = f"{user_id}:{event_id}:{','.join(seat_ids_sorted)}"
+        idempotency_key = hashlib.sha256(raw_key.encode()).hexdigest()
         expires_at = (datetime.now(timezone.utc) + timedelta(minutes=10)).isoformat()
 
         # SQS FIFO 큐에 비동기 처리 위임
@@ -207,6 +223,8 @@ async def get_reservation(reservation_id: str, request: Request):
         for k, v in row.items():
             if hasattr(v, "isoformat"):
                 row[k] = v.isoformat()
+            elif isinstance(v, Decimal):
+                row[k] = float(v)
         return row
     except Exception as e:
         return Response(
@@ -244,6 +262,8 @@ async def list_reservations(request: Request):
             for k, v in row.items():
                 if hasattr(v, "isoformat"):
                     row[k] = v.isoformat()
+                elif isinstance(v, Decimal):
+                    row[k] = float(v)
         return rows
     except Exception as e:
         return Response(
@@ -298,7 +318,7 @@ async def process_payment(request: Request):
                     return {
                         "status": "CONFIRMED",
                         "reservationId": reservation_id,
-                        "amount": reservation["total_price"],
+                        "amount": float(reservation["total_price"]),
                     }
                 else:
                     await cur.execute(

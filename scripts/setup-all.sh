@@ -133,65 +133,19 @@ if [[ -z "$ALB_ADDRESS" ]]; then
   echo "WARNING: ALB 주소를 가져올 수 없습니다. CloudFront API 라우팅을 수동으로 설정하세요."
 else
   echo "ALB: $ALB_ADDRESS"
-  CF_DIST_ID="$(aws cloudfront list-distributions \
-    --query "DistributionList.Items[?Origins.Items[?Id=='S3-frontend']].Id | [0]" \
-    --output text)"
 
-  CF_ETAG="$(aws cloudfront get-distribution-config --id "$CF_DIST_ID" --query 'ETag' --output text)"
-  CF_CFG="$ROOT/.cf-cfg.json"
-  CF_CFG_UPDATED="$ROOT/.cf-cfg-updated.json"
-  aws cloudfront get-distribution-config --id "$CF_DIST_ID" --query 'DistributionConfig' > "$CF_CFG"
+  # terraform.tfvars에 ALB DNS 저장 → 이후 terraform apply 시 자동 반영
+  TFVARS="$TF_DIR/terraform.tfvars"
+  if [[ -f "$TFVARS" ]] && grep -q '^alb_dns_name' "$TFVARS"; then
+    sed -i "s|^alb_dns_name.*|alb_dns_name = \"$ALB_ADDRESS\"|" "$TFVARS"
+  else
+    echo "alb_dns_name = \"$ALB_ADDRESS\"" >> "$TFVARS"
+  fi
+  echo "terraform.tfvars에 alb_dns_name 저장 완료"
 
-  node -e "
-    const fs = require('fs');
-    const cfgPath = process.argv[1];
-    const outPath = process.argv[2];
-    const albDns  = process.argv[3];
-    const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-
-    if (!cfg.Origins.Items.some(o => o.Id === 'ALB-api')) {
-      cfg.Origins.Items.push({
-        Id: 'ALB-api', DomainName: albDns, OriginPath: '',
-        CustomHeaders: {Quantity: 0},
-        CustomOriginConfig: {
-          HTTPPort: 80, HTTPSPort: 443, OriginProtocolPolicy: 'http-only',
-          OriginSslProtocols: {Quantity: 1, Items: ['TLSv1.2']},
-          OriginReadTimeout: 30, OriginKeepaliveTimeout: 5
-        },
-        ConnectionAttempts: 3, ConnectionTimeout: 10, OriginShield: {Enabled: false}
-      });
-      cfg.Origins.Quantity = cfg.Origins.Items.length;
-    }
-
-    if (!cfg.CacheBehaviors) cfg.CacheBehaviors = {Quantity: 0, Items: []};
-    if (!cfg.CacheBehaviors.Items) cfg.CacheBehaviors.Items = [];
-    if (!cfg.CacheBehaviors.Items.some(b => b.PathPattern === '/api/*')) {
-      cfg.CacheBehaviors.Items.push({
-        PathPattern: '/api/*', TargetOriginId: 'ALB-api',
-        ViewerProtocolPolicy: 'redirect-to-https',
-        AllowedMethods: {Quantity:7, Items:['GET','HEAD','OPTIONS','PUT','POST','PATCH','DELETE'],
-          CachedMethods:{Quantity:2, Items:['GET','HEAD']}},
-        Compress: true,
-        ForwardedValues: {QueryString:true, Cookies:{Forward:'all'},
-          Headers:{Quantity:3, Items:['Authorization','Content-Type','Host']},
-          QueryStringCacheKeys:{Quantity:0}},
-        MinTTL:0, DefaultTTL:0, MaxTTL:0, SmoothStreaming:false, FieldLevelEncryptionId:'',
-        LambdaFunctionAssociations:{Quantity:0}, FunctionAssociations:{Quantity:0}
-      });
-      cfg.CacheBehaviors.Quantity = cfg.CacheBehaviors.Items.length;
-    }
-
-    fs.writeFileSync(outPath, JSON.stringify(cfg));
-    console.log('CloudFront config updated');
-  " "$(cygpath -w "$CF_CFG" 2>/dev/null || echo "$CF_CFG")" \
-    "$(cygpath -w "$CF_CFG_UPDATED" 2>/dev/null || echo "$CF_CFG_UPDATED")" \
-    "$ALB_ADDRESS"
-
-  CF_CFG_UPDATED_WIN="$(cygpath -w "$CF_CFG_UPDATED" 2>/dev/null || echo "$CF_CFG_UPDATED")"
-  aws cloudfront update-distribution --id "$CF_DIST_ID" \
-    --distribution-config "file://$CF_CFG_UPDATED_WIN" \
-    --if-match "$CF_ETAG" --query "Distribution.Status" --output text
-  rm -f "$CF_CFG" "$CF_CFG_UPDATED"
+  # Terraform으로 CloudFront 업데이트 (상태 일관성 유지)
+  echo "Terraform apply로 CloudFront ALB 라우팅 설정 중..."
+  terraform -chdir="$TF_DIR" apply -auto-approve
   echo "CloudFront ALB 라우팅 설정 완료 (전파 3~5분 소요)"
 fi
 

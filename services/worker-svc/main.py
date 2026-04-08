@@ -56,7 +56,7 @@ async def process_message(msg: dict):
 
         placeholders = ",".join(["%s"] * len(seat_ids))
         await cur.execute(
-            f"SELECT id FROM seats WHERE id IN ({placeholders}) AND status = 'AVAILABLE' FOR UPDATE",
+            f"SELECT id, price FROM seats WHERE id IN ({placeholders}) AND status = 'AVAILABLE' FOR UPDATE",
             seat_ids,
         )
         seat_rows = await cur.fetchall()
@@ -68,7 +68,7 @@ async def process_message(msg: dict):
             delete_message(msg["ReceiptHandle"])
             return
 
-        total_price = len(seat_ids) * 50000
+        total_price = sum(row[1] for row in seat_rows)
 
         await cur.execute(
             "INSERT INTO reservations (id, user_id, event_id, status, total_price, expires_at) "

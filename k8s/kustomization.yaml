@@ -4,6 +4,7 @@ kind: Kustomization
 resources:
   - namespace.yaml
   - configmap.yaml
+  - sqs-service-account.yaml
   - event-svc/deployment.yaml
   - event-svc/service.yaml
   - event-svc/hpa.yaml

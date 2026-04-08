@@ -24,6 +24,7 @@ spec:
         prometheus.io/port: "3001"
         prometheus.io/path: "/metrics"
     spec:
+      serviceAccountName: sqs-access-sa
       containers:
         - name: reserv-svc
           image: ticketing/reserv-svc:latest

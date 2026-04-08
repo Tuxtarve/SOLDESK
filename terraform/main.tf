@@ -99,6 +99,7 @@ module "eks" {
   subnet_ids        = module.network.public_subnet_ids
   security_group_id = module.network.eks_sg_id
   cluster_name      = var.eks_cluster_name
+  sqs_queue_arns    = [module.sqs.reservation_queue_arn, module.sqs.reservation_dlq_arn]
 
   # destroy 시 EKS가 네트워크(SG/서브넷)보다 먼저 삭제되도록 보장
   depends_on = [module.network]
@@ -147,5 +148,27 @@ resource "aws_security_group_rule" "redis_from_eks_cluster_sg" {
   protocol                 = "tcp"
   security_group_id        = module.network.redis_sg_id
   source_security_group_id = module.eks.cluster_security_group_id
+}
+
+# EKS 노드 → SQS 접근 허용 (reserv-svc, worker-svc 에서 사용)
+resource "aws_iam_role_policy" "eks_node_sqs" {
+  name = "ticketing-eks-node-sqs"
+  role = module.eks.node_role_name
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "sqs:SendMessage",
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes",
+      ]
+      Resource = [
+        module.sqs.reservation_queue_arn,
+        module.sqs.reservation_dlq_arn,
+      ]
+    }]
+  })
 }
 

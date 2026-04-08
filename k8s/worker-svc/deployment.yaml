@@ -19,6 +19,7 @@ spec:
         prometheus.io/port: "3002"
         prometheus.io/path: "/metrics"
     spec:
+      serviceAccountName: sqs-access-sa
       containers:
         - name: worker-svc
           image: ticketing/worker-svc:latest

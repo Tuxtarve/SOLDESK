@@ -303,3 +303,44 @@ resource "aws_iam_role_policy_attachment" "cluster_autoscaler" {
   role       = aws_iam_role.cluster_autoscaler.name
   policy_arn = aws_iam_policy.cluster_autoscaler.arn
 }
+
+# SQS 접근용 IRSA (reserv-svc, worker-svc 공용)
+resource "aws_iam_role" "sqs_access" {
+  name = "ticketing-sqs-access-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = aws_iam_openid_connect_provider.eks.arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "${local.oidc_issuer}:aud" = "sts.amazonaws.com"
+        }
+        StringLike = {
+          "${local.oidc_issuer}:sub" = "system:serviceaccount:ticketing:sqs-access-sa"
+        }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "sqs_access" {
+  name = "ticketing-sqs-access-policy"
+  role = aws_iam_role.sqs_access.name
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "sqs:SendMessage",
+        "sqs:ReceiveMessage",
+        "sqs:DeleteMessage",
+        "sqs:GetQueueAttributes",
+      ]
+      Resource = var.sqs_queue_arns
+    }]
+  })
+}

@@ -76,6 +76,6 @@ CREATE INDEX idx_reserv_expires ON reservations(expires_at, status);
 -- ══ 샘플 데이터 ══════════════════════════════════════════════════════════════
 
 INSERT IGNORE INTO events (id, title, venue, start_at, total_seats, status) VALUES
-  ('a1b2c3d4-0001-0001-0001-000000000001', 'K-POP 월드 콘서트 2026', 'KSPO DOME, 서울',  DATE_ADD(NOW(), INTERVAL 30 DAY), 10000, 'ON_SALE'),
-  ('a1b2c3d4-0001-0001-0001-000000000002', '클래식 갈라 나이트',      '예술의전당',        DATE_ADD(NOW(), INTERVAL 14 DAY), 2000,  'ON_SALE'),
-  ('a1b2c3d4-0001-0001-0001-000000000003', '스탠드업 코미디 페스티벌', '홍대 롤링홀',       DATE_ADD(NOW(), INTERVAL  7 DAY), 500,   'ON_SALE');
+  ('a1b2c3d4-0001-0001-0001-000000000001', 'K-POP 월드 콘서트 2026', 'KSPO DOME, 서울',  DATE_ADD(NOW(), INTERVAL 30 DAY), 32, 'ON_SALE'),
+  ('a1b2c3d4-0001-0001-0001-000000000002', '클래식 갈라 나이트',      '예술의전당',        DATE_ADD(NOW(), INTERVAL 14 DAY), 16, 'ON_SALE'),
+  ('a1b2c3d4-0001-0001-0001-000000000003', '스탠드업 코미디 페스티벌', '홍대 롤링홀',       DATE_ADD(NOW(), INTERVAL  7 DAY), 12, 'ON_SALE');

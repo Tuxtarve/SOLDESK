@@ -6,3 +6,9 @@ variable "cluster_name" {
   type        = string
   description = "EKS cluster resource name"
 }
+
+variable "sqs_queue_arns" {
+  type        = list(string)
+  description = "SQS queue ARNs for IRSA"
+  default     = []
+}
