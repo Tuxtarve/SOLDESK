@@ -46,7 +46,10 @@ async def process_message(msg: dict):
         event_id = body["eventId"]
         seat_ids = body["seatIds"]
         expires_at = body["expiresAt"]
-        lock_key = body["lockKey"]
+        lock_keys = body.get("lockKeys", [])
+        # 하위 호환: 이전 형식(lockKey)도 지원
+        if not lock_keys and "lockKey" in body:
+            lock_keys = [body["lockKey"]]
 
         log.info("메시지 처리 시작: reservationId=%s", reservation_id)
 
@@ -92,7 +95,8 @@ async def process_message(msg: dict):
         writer_pool.release(conn)
         conn = None
 
-        await redis_client.delete(lock_key)
+        for key in lock_keys:
+            await redis_client.delete(key)
 
         processed_total.labels(result="success").inc()
         log.info("예매 확정 완료: reservationId=%s", reservation_id)

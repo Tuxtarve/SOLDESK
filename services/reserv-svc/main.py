@@ -114,27 +114,35 @@ async def create_reservation(request: Request):
         )
 
     seat_ids_sorted = sorted(seat_ids)
-    lock_key = f"seat:lock:{event_id}:{','.join(seat_ids_sorted)}"
+    lock_keys = [f"seat:lock:{event_id}:{sid}" for sid in seat_ids_sorted]
     avail_key = f"seat:available:{event_id}"
 
     try:
-        # Redis 분산 락 (NX = 없을 때만 SET)
-        locked = await redis_client.set(lock_key, user_id, ex=600, nx=True)
-        if not locked:
-            reservation_total.labels(status="seat_locked").inc()
-            elapsed = (time.time() - start) * 1000
-            reservation_duration.observe(elapsed)
-            return Response(
-                content=json.dumps({"error": "다른 사용자가 선택 중인 좌석입니다"}),
-                status_code=409,
-                media_type="application/json",
-            )
+        # Redis 개별 좌석 분산 락 (NX = 없을 때만 SET)
+        locked_keys = []
+        for key in lock_keys:
+            ok = await redis_client.set(key, user_id, ex=600, nx=True)
+            if ok:
+                locked_keys.append(key)
+            else:
+                # 하나라도 실패하면 이미 잡은 락 전부 해제
+                for k in locked_keys:
+                    await redis_client.delete(k)
+                reservation_total.labels(status="seat_locked").inc()
+                elapsed = (time.time() - start) * 1000
+                reservation_duration.observe(elapsed)
+                return Response(
+                    content=json.dumps({"error": "다른 사용자가 선택 중인 좌석입니다"}),
+                    status_code=409,
+                    media_type="application/json",
+                )
 
         # Redis 재고 차감
         remaining = await redis_client.decrby(avail_key, len(seat_ids))
         if remaining < 0:
             await redis_client.incrby(avail_key, len(seat_ids))
-            await redis_client.delete(lock_key)
+            for key in lock_keys:
+                await redis_client.delete(key)
             reservation_total.labels(status="sold_out").inc()
             elapsed = (time.time() - start) * 1000
             reservation_duration.observe(elapsed)
@@ -162,7 +170,7 @@ async def create_reservation(request: Request):
                 "eventId": event_id,
                 "seatIds": seat_ids,
                 "expiresAt": expires_at,
-                "lockKey": lock_key,
+                "lockKeys": lock_keys,
             }),
         )
 
@@ -183,7 +191,8 @@ async def create_reservation(request: Request):
         )
 
     except Exception as e:
-        await redis_client.delete(lock_key)
+        for key in lock_keys:
+            await redis_client.delete(key)
         await redis_client.incrby(avail_key, len(seat_ids))
         reservation_total.labels(status="error").inc()
         elapsed = (time.time() - start) * 1000
