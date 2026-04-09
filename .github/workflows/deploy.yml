@@ -54,11 +54,21 @@ jobs:
           aws-region:     ${{ env.AWS_REGION }}
       - name: ECR 로그인
         uses: aws-actions/amazon-ecr-login@v2
-      - name: Docker 빌드 & ECR Push
+      - name: Docker 빌드
         working-directory: services/event-svc
         run: |
           IMAGE=${{ env.ECR_REGISTRY }}/ticketing/event-svc
           docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:latest .
+      - name: 헬스체크 테스트
+        run: |
+          IMAGE=${{ env.ECR_REGISTRY }}/ticketing/event-svc
+          docker run -d --name test-event-svc -p 3000:3000 $IMAGE:${{ github.sha }}
+          sleep 3
+          curl -f http://localhost:3000/healthz || (docker logs test-event-svc && exit 1)
+          docker stop test-event-svc && docker rm test-event-svc
+      - name: ECR Push
+        run: |
+          IMAGE=${{ env.ECR_REGISTRY }}/ticketing/event-svc
           docker push $IMAGE:${{ github.sha }}
           docker push $IMAGE:latest
       - name: EKS kubeconfig
@@ -84,11 +94,21 @@ jobs:
           aws-region:     ${{ env.AWS_REGION }}
       - name: ECR 로그인
         uses: aws-actions/amazon-ecr-login@v2
-      - name: Docker 빌드 & ECR Push
+      - name: Docker 빌드
         working-directory: services/reserv-svc
         run: |
           IMAGE=${{ env.ECR_REGISTRY }}/ticketing/reserv-svc
           docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:latest .
+      - name: 헬스체크 테스트
+        run: |
+          IMAGE=${{ env.ECR_REGISTRY }}/ticketing/reserv-svc
+          docker run -d --name test-reserv-svc -p 3001:3001 $IMAGE:${{ github.sha }}
+          sleep 3
+          curl -f http://localhost:3001/health || (docker logs test-reserv-svc && exit 1)
+          docker stop test-reserv-svc && docker rm test-reserv-svc
+      - name: ECR Push
+        run: |
+          IMAGE=${{ env.ECR_REGISTRY }}/ticketing/reserv-svc
           docker push $IMAGE:${{ github.sha }}
           docker push $IMAGE:latest
       - name: EKS kubeconfig
@@ -114,11 +134,21 @@ jobs:
           aws-region:     ${{ env.AWS_REGION }}
       - name: ECR 로그인
         uses: aws-actions/amazon-ecr-login@v2
-      - name: Docker 빌드 & ECR Push
+      - name: Docker 빌드
         working-directory: services/worker-svc
         run: |
           IMAGE=${{ env.ECR_REGISTRY }}/ticketing/worker-svc
           docker build -t $IMAGE:${{ github.sha }} -t $IMAGE:latest .
+      - name: 헬스체크 테스트
+        run: |
+          IMAGE=${{ env.ECR_REGISTRY }}/ticketing/worker-svc
+          docker run -d --name test-worker-svc -p 3002:3002 $IMAGE:${{ github.sha }}
+          sleep 3
+          curl -f http://localhost:3002/health || (docker logs test-worker-svc && exit 1)
+          docker stop test-worker-svc && docker rm test-worker-svc
+      - name: ECR Push
+        run: |
+          IMAGE=${{ env.ECR_REGISTRY }}/ticketing/worker-svc
           docker push $IMAGE:${{ github.sha }}
           docker push $IMAGE:latest
       - name: EKS kubeconfig
