@@ -1,0 +1,19 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - configmap.yaml
+  - sqs-service-account.yaml
+  - read-api/deployment.yaml
+  - read-api/service.yaml
+  - write-api/deployment.yaml
+  - write-api/service.yaml
+  - worker-svc/deployment.yaml
+  - worker-svc/service.yaml
+  - ingress.yaml
+
+images:
+  - name: ticketing/ticketing-was
+    newTag: latest
+  - name: ticketing/worker-svc
+    newTag: latest

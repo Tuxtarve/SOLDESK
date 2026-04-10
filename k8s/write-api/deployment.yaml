@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: write-api
+  labels:
+    app: write-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: write-api
+  template:
+    metadata:
+      labels:
+        app: write-api
+    spec:
+      # READ_API_PORT / WRITE_API_PORT 가 K8s 자동 주입 변수와 이름 충돌하지 않도록 끔.
+      enableServiceLinks: false
+      serviceAccountName: sqs-access-sa
+      containers:
+        - name: write-api
+          image: ticketing/ticketing-was:latest
+          command: ["uvicorn", "write_app:app", "--host", "0.0.0.0", "--port", "5001"]
+          ports:
+            - containerPort: 5001
+          envFrom:
+            - configMapRef:
+                name: ticketing-config
+            - secretRef:
+                name: ticketing-secrets
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "300m"
+          livenessProbe:
+            httpGet:
+              path: /api/write/health
+              port: 5001
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /api/write/health
+              port: 5001
+            initialDelaySeconds: 5
+            periodSeconds: 10

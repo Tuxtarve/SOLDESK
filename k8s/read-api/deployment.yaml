@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: read-api
+  labels:
+    app: read-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: read-api
+  template:
+    metadata:
+      labels:
+        app: read-api
+    spec:
+      # K8s가 같은 네임스페이스 Service 이름으로 READ_API_PORT=tcp://... 를 자동 주입하면
+      # 앱 config.py의 READ_API_PORT(정수)와 충돌해 CrashLoopBackOff 발생함.
+      enableServiceLinks: false
+      containers:
+        - name: read-api
+          # ECR 전체 경로 (kubectl apply -f 단독 시에도 ErrImagePull 방지). 태그는 kustomization에서 덮어쓸 수 있음.
+          image: ticketing/ticketing-was:latest
+          command: ["uvicorn", "read_app:app", "--host", "0.0.0.0", "--port", "5000"]
+          ports:
+            - containerPort: 5000
+          envFrom:
+            - configMapRef:
+                name: ticketing-config
+            - secretRef:
+                name: ticketing-secrets
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "300m"
+          livenessProbe:
+            httpGet:
+              path: /api/read/health
+              port: 5000
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /api/read/health
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10
