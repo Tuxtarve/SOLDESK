@@ -4,12 +4,12 @@ resource "aws_db_subnet_group" "main" {
   tags       = { Name = "prod-rds-subnet-group", Environment = var.env }
 }
 
-# Primary (Writer) - db.t3.small MySQL
+# Primary (Writer) - db.t3.micro MySQL
 resource "aws_db_instance" "writer" {
   identifier        = "prod-ticketing-writer"
   engine            = "mysql"
   engine_version    = "8.0"
-  instance_class    = "db.t3.small"
+  instance_class    = "db.t3.micro"
   allocated_storage = 20
   storage_type      = "gp2"
 
@@ -28,11 +28,11 @@ resource "aws_db_instance" "writer" {
   tags = { Name = "ticketing-mysql-writer", Role = "primary", Environment = var.env }
 }
 
-# Read Replica (Reader) - db.t3.small
+# Read Replica (Reader) - db.t3.micro
 resource "aws_db_instance" "reader" {
   identifier          = "prod-ticketing-reader"
   replicate_source_db = aws_db_instance.writer.identifier
-  instance_class      = "db.t3.small"
+  instance_class      = "db.t3.micro"
 
   skip_final_snapshot = true
   deletion_protection = false
