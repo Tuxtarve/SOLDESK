@@ -223,6 +223,19 @@ PROMEOF
       --parameters "{\"commands\":[\"echo $PROM_B64 | base64 -d > /opt/monitoring/prometheus/prometheus.yml && docker restart prometheus\"]}" \
       --output text --query "Command.CommandId" >/dev/null
     echo "Prometheus에 EKS 서비스 scrape 등록 완료 (ALB: $ALB_ADDRESS)"
+
+    # ── 11. Grafana 대시보드 JSON 프로비저닝 ──
+    echo ""
+    echo "=========================================="
+    echo " [11/11] Grafana 대시보드 프로비저닝"
+    echo "=========================================="
+    DASH_B64=$(base64 -w 0 < "$ROOT/monitoring/grafana/dashboards/ticketing-overview.json")
+    aws ssm send-command \
+      --instance-ids "$MONITORING_INSTANCE_ID" \
+      --document-name "AWS-RunShellScript" \
+      --parameters "{\"commands\":[\"echo $DASH_B64 | base64 -d > /opt/monitoring/grafana/dashboards/ticketing-overview.json && docker restart grafana\"]}" \
+      --output text --query "Command.CommandId" >/dev/null
+    echo "Grafana 대시보드 프로비저닝 완료"
   else
     echo "WARNING: 모니터링 인스턴스 ID를 가져올 수 없어 Prometheus 설정을 건너뜁니다."
   fi

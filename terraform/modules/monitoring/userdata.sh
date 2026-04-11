@@ -13,7 +13,7 @@ curl -SL "https://github.com/docker/compose/releases/latest/download/docker-comp
 chmod +x /usr/local/bin/docker-compose
 
 # ── 디렉터리 생성 ──
-mkdir -p /opt/monitoring/{prometheus/rules,alertmanager,cloudwatch,grafana/provisioning}
+mkdir -p /opt/monitoring/{prometheus/rules,alertmanager,cloudwatch,grafana/provisioning/datasources,grafana/provisioning/dashboards,grafana/dashboards}
 cd /opt/monitoring
 
 # ── docker-compose.yml ──
@@ -52,6 +52,8 @@ services:
       - GF_SERVER_ROOT_URL=http://%(domain)s:3000/
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/etc/grafana/dashboards:ro
     depends_on:
       - prometheus
     networks:
@@ -123,6 +125,34 @@ COMPOSE_EOF
 
 # docker-compose.yml 내 REDIS_HOST 치환
 sed -i "s|REDIS_HOST_PLACEHOLDER|${redis_host}|g" docker-compose.yml
+
+# ── Grafana 프로비저닝: 데이터소스 ──
+cat > grafana/provisioning/datasources/prometheus.yml << 'GF_DS_EOF'
+apiVersion: 1
+datasources:
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    editable: false
+    uid: prometheus
+GF_DS_EOF
+
+# ── Grafana 프로비저닝: 대시보드 프로바이더 ──
+cat > grafana/provisioning/dashboards/dashboards.yml << 'GF_DASH_EOF'
+apiVersion: 1
+providers:
+  - name: 'default'
+    orgId: 1
+    folder: 'Ticketing'
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/grafana/dashboards
+GF_DASH_EOF
 
 # ── prometheus.yml ──
 cat > prometheus/prometheus.yml << 'PROM_EOF'

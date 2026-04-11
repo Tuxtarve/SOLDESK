@@ -54,3 +54,9 @@ resource "aws_instance" "monitoring" {
 
   tags = { Name = "Ticketing-Monitoring-Host", Environment = var.env, Layer = "web" }
 }
+
+resource "aws_eip" "monitoring" {
+  instance = aws_instance.monitoring.id
+  domain   = "vpc"
+  tags     = { Name = "ticketing-monitoring-eip", Environment = var.env }
+}
