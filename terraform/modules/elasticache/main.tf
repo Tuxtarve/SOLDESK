@@ -8,7 +8,7 @@ resource "aws_elasticache_replication_group" "redis" {
   description          = "Ticketing Redis replication group"
   engine               = "redis"
   engine_version       = "7.0"
-  node_type            = "cache.t3.micro"
+  node_type            = "cache.t3.small"
   port                 = 6379
 
   # Primary 1 + Replica 1 = 총 2노드, 자동 failover
