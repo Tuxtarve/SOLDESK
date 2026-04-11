@@ -103,7 +103,7 @@ async def create_reservation(request: Request):
     body = await request.json()
     event_id = body.get("eventId")
     seat_ids = body.get("seatIds")
-    user_id = request.headers.get("x-amzn-oidc-identity") or body.get("userId")
+    user_id = request.headers.get("x-user-email") or body.get("userId")
 
     if not user_id or not event_id or not seat_ids:
         reservation_total.labels(status="bad_request").inc()
@@ -208,7 +208,7 @@ async def create_reservation(request: Request):
 # ── 예매 조회 ─────────────────────────────────────────────────────────────────
 @app.get("/api/reservations/{reservation_id}")
 async def get_reservation(reservation_id: str, request: Request):
-    user_id = request.headers.get("x-amzn-oidc-identity")
+    user_id = request.headers.get("x-user-email")
     try:
         async with reader_pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cur:
@@ -246,7 +246,7 @@ async def get_reservation(reservation_id: str, request: Request):
 # ── 내 예매 목록 ──────────────────────────────────────────────────────────────
 @app.get("/api/reservations")
 async def list_reservations(request: Request):
-    user_id = request.headers.get("x-amzn-oidc-identity")
+    user_id = request.headers.get("x-user-email")
     if not user_id:
         return Response(
             content=json.dumps({"error": "인증 필요"}),
@@ -288,7 +288,7 @@ async def process_payment(request: Request):
     body = await request.json()
     reservation_id = body.get("reservationId")
     approved = body.get("approved")
-    user_id = request.headers.get("x-amzn-oidc-identity") or body.get("userId")
+    user_id = request.headers.get("x-user-email") or body.get("userId")
 
     if not reservation_id:
         return Response(

@@ -243,7 +243,7 @@
 <script>
 // ── 설정 ──────────────────────────────────────────────────────────────────────
 const API            = '/api';
-const CLIENT_ID      = '5f745jt0nk0vg4fsofpq3fndre';
+const CLIENT_ID      = '__COGNITO_CLIENT_ID__';
 const COGNITO_API    = 'https://cognito-idp.ap-northeast-2.amazonaws.com/';
 
 // ── 상태 ──────────────────────────────────────────────────────────────────────
@@ -580,7 +580,7 @@ async function openPaymentModal() {
     const r = await fetch(API + '/reservations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser.token}` },
-      body: JSON.stringify({ eventId: selectedEvent.id, seatIds: selectedSeats, userId: currentUser.sub }),
+      body: JSON.stringify({ eventId: selectedEvent.id, seatIds: selectedSeats, userId: currentUser.email }),
     });
     const d = await r.json();
     if (!r.ok) { showToast('error', '예매 실패', d.error || ''); btn.disabled = false; btn.textContent = '결제하기'; return; }
@@ -609,7 +609,7 @@ async function processPayment(approved) {
     const r = await fetch(API + '/payments', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${currentUser?.token}` },
-      body: JSON.stringify({ reservationId: pendingReservId, approved, userId: currentUser?.sub }),
+      body: JSON.stringify({ reservationId: pendingReservId, approved, userId: currentUser?.email }),
     });
     const d = await r.json();
     if (approved && d.status === 'CONFIRMED') {
@@ -638,7 +638,7 @@ async function loadMyReservations() {
   }
   try {
     const r = await fetch(API + '/reservations', {
-      headers: { 'Authorization': `Bearer ${currentUser.token}`, 'x-amzn-oidc-identity': currentUser.sub }
+      headers: { 'Authorization': `Bearer ${currentUser.token}`, 'x-user-email': currentUser.email }
     });
     const data = await r.json();
     renderMyReservations(Array.isArray(data) ? data : []);

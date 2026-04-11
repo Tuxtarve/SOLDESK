@@ -113,7 +113,7 @@ with open(sys.argv[1], 'w') as f:
 
       forwarded_values {
         query_string = true
-        headers      = ["Authorization", "Content-Type", "Host", "CloudFront-Forwarded-Proto"]
+        headers      = ["Authorization", "Content-Type", "Host", "CloudFront-Forwarded-Proto", "x-user-email"]
         cookies { forward = "all" }
       }
 

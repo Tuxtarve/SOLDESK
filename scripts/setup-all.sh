@@ -103,8 +103,15 @@ echo "=========================================="
 echo " [8/8] 프론트엔드 S3 배포"
 echo "=========================================="
 BUCKET="ticketing-frontend-${ACCOUNT_ID}"
-aws s3 cp "$ROOT/frontend/src/index.html" "s3://${BUCKET}/index.html" \
+COGNITO_CLIENT_ID="$(terraform output -raw cognito_client_id)"
+
+# 플레이스홀더를 실제 값으로 치환하여 임시 파일 생성 후 업로드
+sed "s|__COGNITO_CLIENT_ID__|${COGNITO_CLIENT_ID}|g" \
+  "$ROOT/frontend/src/index.html" > /tmp/index.html
+
+aws s3 cp /tmp/index.html "s3://${BUCKET}/index.html" \
   --content-type "text/html; charset=utf-8" --region "$REGION"
+rm -f /tmp/index.html
 
 CF_DIST_ID="$(aws cloudfront list-distributions \
   --query "DistributionList.Items[?Origins.Items[?Id=='S3-frontend']].Id | [0]" \
@@ -147,6 +154,78 @@ else
   echo "Terraform apply로 CloudFront ALB 라우팅 설정 중..."
   terraform -chdir="$TF_DIR" apply -auto-approve
   echo "CloudFront ALB 라우팅 설정 완료 (전파 3~5분 소요)"
+
+  # ── 10. 모니터링 Prometheus에 EKS 서비스 scrape 등록 ──
+  echo ""
+  echo "=========================================="
+  echo " [10/10] Prometheus EKS 서비스 scrape 등록"
+  echo "=========================================="
+  MONITORING_INSTANCE_ID="$(terraform output -raw monitoring_instance_id 2>/dev/null || true)"
+  if [[ -n "$MONITORING_INSTANCE_ID" && "$MONITORING_INSTANCE_ID" != "" ]]; then
+    PROM_B64=$(base64 -w 0 << PROMEOF
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    env: prod
+    region: ap-northeast-2
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+scrape_configs:
+  - job_name: node-exporter
+    static_configs:
+      - targets: ['node-exporter:9100']
+        labels:
+          instance: monitoring-ec2
+
+  - job_name: cloudwatch-exporter
+    static_configs:
+      - targets: ['cloudwatch-exporter:9106']
+    scrape_interval: 60s
+
+  - job_name: redis-exporter
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  - job_name: prometheus
+    static_configs:
+      - targets: ['localhost:9090']
+
+  - job_name: event-svc
+    static_configs:
+      - targets: ['${ALB_ADDRESS}:80']
+    metrics_path: /metrics
+    honor_labels: true
+
+  - job_name: reserv-svc
+    static_configs:
+      - targets: ['${ALB_ADDRESS}:80']
+    metrics_path: /reserv-metrics
+    honor_labels: true
+
+  - job_name: worker-svc
+    static_configs:
+      - targets: ['${ALB_ADDRESS}:80']
+    metrics_path: /worker-metrics
+    honor_labels: true
+PROMEOF
+)
+    aws ssm send-command \
+      --instance-ids "$MONITORING_INSTANCE_ID" \
+      --document-name "AWS-RunShellScript" \
+      --parameters "{\"commands\":[\"echo $PROM_B64 | base64 -d > /opt/monitoring/prometheus/prometheus.yml && docker restart prometheus\"]}" \
+      --output text --query "Command.CommandId" >/dev/null
+    echo "Prometheus에 EKS 서비스 scrape 등록 완료 (ALB: $ALB_ADDRESS)"
+  else
+    echo "WARNING: 모니터링 인스턴스 ID를 가져올 수 없어 Prometheus 설정을 건너뜁니다."
+  fi
 fi
 
 echo ""

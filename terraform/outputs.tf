@@ -69,6 +69,10 @@ output "monitoring_ec2_ip" {
   value = module.monitoring.public_ip
 }
 
+output "monitoring_instance_id" {
+  value = module.monitoring.instance_id
+}
+
 output "prometheus_url" {
   description = "Prometheus Web UI"
   value       = "http://${module.monitoring.public_ip}:9090"
