@@ -317,6 +317,29 @@
     return { theaters, halls, movies, schedules, reservedSeats };
   }
 
+  /** 극장 상세 API 슬라이스를 기존 dataset 에 합쳐 잔여석·선점좌표를 서버와 맞춤 (콘서트 bootstrap 재조회와 동일 역할) */
+  function mergeTheaterDetailSlice(dataset, detail) {
+    if (!dataset || !detail || typeof detail !== 'object') return;
+    const rows = Array.isArray(detail.schedules) ? detail.schedules : [];
+    rows.forEach(function (incoming) {
+      const sid = toInt(incoming.schedule_id);
+      const existing = dataset.schedules.find(function (s) {
+        return toInt(s.schedule_id) === sid;
+      });
+      if (!existing) return;
+      existing.remain_count = Math.max(0, toInt(incoming.remain_count));
+      existing.status = String(incoming.status || existing.status || 'OPEN').toUpperCase();
+      if (incoming.total_count != null && incoming.total_count !== undefined) {
+        existing.total_count = Math.max(0, toInt(incoming.total_count));
+      }
+    });
+    const rs = detail.reservedSeats && typeof detail.reservedSeats === 'object' ? detail.reservedSeats : {};
+    Object.keys(rs).forEach(function (key) {
+      const arr = rs[key];
+      dataset.reservedSeats[String(key)] = Array.isArray(arr) ? arr.map(String) : [];
+    });
+  }
+
   function isHttp404Error(error) {
     if (!error) return false;
     if (error.status === 404) return true;
@@ -847,6 +870,17 @@
         state.dataset.reservedSeats[String(schedule.schedule_id)] = seatStore;
         schedule.remain_count = Math.max(0, toInt(schedule.remain_count) - selectedSeats.length);
         render();
+
+        const tid = toInt((theater && theater.theater_id) || (hall && hall.theater_id));
+        if (tid > 0 && typeof readApi === 'function') {
+          readApi('/theater/' + tid, { cache: 'no-store' })
+            .then(function (detail) {
+              if (!detail || !state.dataset) return;
+              mergeTheaterDetailSlice(state.dataset, detail);
+              render();
+            })
+            .catch(function () {});
+        }
       }
     });
   }
@@ -1035,7 +1069,8 @@
     try {
       state.movieSortOrder = 'AUDIENCE';
       state.dateWindowStartKey = toDateKey(new Date());
-      state.dataset = await loadInitialDataset(false);
+      // 극장 부트스트랩은 잔여석 포함 단일 Redis 키 → 브라우저 HTTP 캐시까지 막아 새로고침 시 서버가 재조회하도록
+      state.dataset = await loadInitialDataset(true);
       state.movies = Array.isArray(state.dataset.movies) ? state.dataset.movies.slice() : [];
 
       const remainOverrides = await loadOptionalRemainOverrides();

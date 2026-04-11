@@ -70,7 +70,7 @@ ecr_repo_worker_svc = ""
 # ecr_repo_worker_svc = "myteam/worker-svc"
 
 image_tag = ""
-# image_tag = "v1"
+# image_tag = "v1", "latest" 등
 
 ########################################
 # 고정 예시 (필요 시 수정)

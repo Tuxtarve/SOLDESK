@@ -132,6 +132,28 @@
           if (open && sold) target.status = 'CLOSED';
         }
         renderPage(state.mount, state);
+
+        const cid = toInt(concert.concert_id);
+        const rawSid = toInt(result.show_id);
+        if (cid > 0 && rawSid > 0 && typeof readApi === 'function') {
+          readApi(`/concert/${cid}/booking-bootstrap?show_id=${rawSid}`)
+            .then(function (data) {
+              const one =
+                data && Array.isArray(data.shows) && data.shows.length ? data.shows[0] : null;
+              if (!one) return;
+              const t2 = state.shows.find(function (s) {
+                return String(s.show_id) === sid;
+              });
+              if (t2) {
+                t2.remain_count = toInt(one.remain_count);
+                t2.status = one.status;
+                t2.reserved_seats = (one.reserved_seats || []).slice();
+                state.reservedByShow[sid] = t2.reserved_seats.slice();
+              }
+              renderPage(state.mount, state);
+            })
+            .catch(function () {});
+        }
       }
     });
   }

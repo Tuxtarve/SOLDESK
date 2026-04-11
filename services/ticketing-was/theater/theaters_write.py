@@ -2,7 +2,7 @@
 극장 예매 쓰기 — SQS FIFO 통합 버전.
 
 원본: _ScheduleLockPool(threading.Lock)으로 in-process 직렬화
-변경: SQS FIFO MessageGroupId=schedule_id로 다중 Pod 직렬화.
+변경: SQS FIFO MessageGroupId=schedule_id-user_id (유저별 병렬, 동일 스케줄도 DB 락으로 정합성).
       실제 DB 트랜잭션은 worker-svc가 처리.
 """
 import json
@@ -13,9 +13,8 @@ import pymysql
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from cache.redis_client import redis_client
 from config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER
-from sqs_client import send_booking_message, get_booking_result
+from sqs_client import get_booking_status_dict, send_booking_message
 
 router = APIRouter()
 
@@ -112,7 +111,7 @@ def commit_booking(payload: dict):
 
     booking_ref = send_booking_message(
         booking_type="theater",
-        group_id=str(schedule_id),
+        group_id=f"{schedule_id}-{user_id}",
         payload={
             "user_id": user_id,
             "schedule_id": schedule_id,
@@ -129,8 +128,5 @@ def commit_booking(payload: dict):
 
 @router.get("/api/write/booking/status/{booking_ref}")
 def check_booking_status(booking_ref: str):
-    """SQS 비동기 예매 결과 조회 (프론트엔드에서 폴링)."""
-    result = get_booking_result(booking_ref)
-    if result is None:
-        return {"status": "PROCESSING", "booking_ref": booking_ref}
-    return result
+    """SQS 비동기 예매 결과 조회 (프론트엔드에서 폴링). Redis queued 키로 PROCESSING vs 무효 ref 구분."""
+    return get_booking_status_dict(booking_ref)

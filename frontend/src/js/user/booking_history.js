@@ -40,14 +40,16 @@
     return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
   }
 
+  /** concert_booking_modal / theaters_detail 과 동일: DB 키 "행-열" → "A열 n번" 또는 "95열 18번" */
   function formatSeat(seatKey) {
     const parts = String(seatKey).split('-');
-    if (parts.length !== 2) return seatKey;
+    if (parts.length !== 2) return escapeHtml(String(seatKey));
     const row = parseInt(parts[0], 10);
     const col = parseInt(parts[1], 10);
-    if (Number.isNaN(row) || Number.isNaN(col)) return seatKey;
-    const rowLetter = String.fromCharCode(64 + row);
-    return `${rowLetter}${col}`;
+    if (Number.isNaN(row) || Number.isNaN(col)) return escapeHtml(String(seatKey));
+    const rowLabel =
+      row === 1 ? 'A열' : row === 2 ? 'B열' : row === 3 ? 'C열' : `${row}열`;
+    return escapeHtml(`${rowLabel} ${col}번`);
   }
 
   function isCancelled(booking) {
@@ -255,12 +257,13 @@
         booking_kind: kind,
       });
 
-      if (result && result.success) {
-        alert('환불이 완료되었습니다.');
+      // 백엔드는 { ok: true, message } 형식; success 별칭은 구버전 호환
+      if (result && (result.ok === true || result.success === true)) {
+        alert(result.message || '환불이 완료되었습니다.');
         if (runtime && typeof runtime.notifyReadCacheRebuilt === 'function') {
           runtime.notifyReadCacheRebuilt();
         }
-        window.location.reload();
+        await loadBookings(currentPage);
       } else {
         alert(result.message || '환불 처리에 실패했습니다.');
       }

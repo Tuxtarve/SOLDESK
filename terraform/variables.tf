@@ -105,6 +105,12 @@ variable "run_k8s_bootstrap_after_apply" {
   default     = true
 }
 
+variable "install_keda" {
+  description = "true: terraform helm_release 로 KEDA operator 설치. run_k8s_bootstrap 시 kubectl 로 k8s/keda 적용(ScaledObject paused·오토스케일 끔)."
+  type        = bool
+  default     = true
+}
+
 variable "image_tag" {
   description = "Docker image tag to deploy for ticketing-was and worker-svc."
   type        = string
@@ -127,4 +133,74 @@ variable "k8s_ingress_name" {
   description = "Ingress resource name used for api-origin.js sync."
   type        = string
   default     = "ticketing-ingress"
+}
+
+# ── 용량(평시 저비용 + 피크·향후 R/O 리플리카 전제) ─────────────────────────
+# “100만 동시”는 단일 RDS에 100만 QPS가 아님.
+# - 쓰기: SQS FIFO + 회차/상영별 MessageGroupId → 핫 좌석풀은 직렬 커밋, Writer 부하는 (워커 처리량)×(동시에 열린 회차 수)에 가깝다.
+# - 읽기: ElastiCache 조회 캐시 + (추가 예정) RDS Read Replica + read-api 수평 확장이 부담을 나눈다.
+# - EKS: 노드 max를 넉넉히 두고 평시 desired=1 유지 → Cluster Autoscaler·HPA로 피크 시 Pod/노드 증설.
+# Reader 리플리카 리소스는 아직 Terraform에 넣지 않음 — Writer 클래스는 “커밋 전용” 여유만 본다.
+
+variable "rds_writer_instance_class" {
+  type        = string
+  default     = "db.t3.micro"
+  description = <<-EOT
+    RDS Writer (MySQL) — SQS 워커의 INSERT/UPDATE/락만. micro는 시드·저트래픽.
+    오픈 직전에는 small 등으로 상향 검토. Reader 추가 후에도 Writer는 쓰기만 받는다.
+  EOT
+}
+
+variable "rds_allocated_storage_gb" {
+  type        = number
+  default     = 20
+  description = "Writer 초기 디스크(GB)."
+}
+
+variable "rds_max_allocated_storage_gb" {
+  type        = number
+  default     = 0
+  description = "자동 스토리지 확장 상한(GB). allocated보다 커야 활성화. 0이면 비활성."
+}
+
+variable "elasticache_node_type" {
+  type        = string
+  default     = "cache.t3.micro"
+  description = <<-EOT
+    단일 노드 ElastiCache (Redis OSS). 조회 JSON + booking 논리 DB 동시 적재.
+    캐시 키·회차 수가 늘면 메모리 부족(eviction) 전에 small 등으로 상향.
+  EOT
+}
+
+variable "eks_app_node_instance_types" {
+  type        = list(string)
+  default     = ["t3.small"]
+  description = "EKS 워커 인스턴스. 피크 시 노드 수만 늘리면 read-api/worker 파드 수용."
+}
+
+variable "eks_app_node_desired_size" {
+  type        = number
+  default     = 2
+  description = "평시 desired 노드 수 (Pod 밀도 한도로 1노드가 부족할 때 2 권장)."
+}
+
+variable "eks_app_node_min_size" {
+  type        = number
+  default     = 1
+  description = "최소 노드(비용 바닥)."
+}
+
+variable "eks_app_node_max_size" {
+  type        = number
+  default     = 12
+  description = <<-EOT
+    피크 시 노드 상한 예시: read-api replica·워커·시스템 파드 합산.
+    12×t3.small 수준은 “수만~수십만 RPS급 HTTP”까지는 ALB·앱 한도와 별도로 튜닝 필요.
+    실제 100만 동시는 CloudFront·정적 분리·캐시 적중률·Reader 추가와 함께 설계한다.
+  EOT
+
+  validation {
+    condition     = var.eks_app_node_max_size >= var.eks_app_node_desired_size && var.eks_app_node_desired_size >= var.eks_app_node_min_size && var.eks_app_node_min_size >= 1
+    error_message = "eks_app_node_max_size >= desired >= min >= 1 이어야 합니다."
+  }
 }

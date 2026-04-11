@@ -122,20 +122,19 @@ resource "aws_iam_role_policy_attachment" "eks_node_ecr" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
 
-# 워커 노드 그룹 (테스트/실행 가능 최소 안정)
+# 워커 노드 그룹 — 평시 min/desired 로 비용 최소, max 로 피크 시 증설 여유(Cluster Autoscaler 권장)
 resource "aws_eks_node_group" "app" {
   cluster_name    = aws_eks_cluster.main.name
   node_group_name = "${local.name_prefix}-app-nodes"
   node_role_arn   = aws_iam_role.eks_node.arn
   subnet_ids      = var.subnet_ids
-  # 최소 비용 구성: (Ingress/ALB 요구사항 고려) 노드 2대 유지 + 인스턴스는 t3.small
-  instance_types = ["t3.small"]
-  ami_type       = "AL2023_x86_64_STANDARD"
+  instance_types  = var.app_node_instance_types
+  ami_type        = "AL2023_x86_64_STANDARD"
 
   scaling_config {
-    desired_size = 1
-    min_size     = 1
-    max_size     = 1
+    desired_size = var.app_node_desired_size
+    min_size     = var.app_node_min_size
+    max_size     = var.app_node_max_size
   }
 
   update_config { max_unavailable = 1 }

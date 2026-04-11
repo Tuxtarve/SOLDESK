@@ -74,6 +74,21 @@ kubectl -n "$NS" set image deploy/"$WORKER" "worker-svc=${WORKER_IMAGE}" >/dev/n
 
 kubectl -n "$NS" annotate sa sqs-access-sa "eks.amazonaws.com/role-arn=${SQS_ROLE_ARN}" --overwrite >/dev/null 2>&1 || true
 
+# KEDA operator 는 terraform helm_release 로 설치됨. 여기서는 CRD 준비 후 k8s/keda 만 적용(paused ScaledObject). INSTALL_KEDA=0 이면 생략.
+if [[ "${INSTALL_KEDA:-1}" != "0" ]]; then
+  echo "=== KEDA CRD 대기 (terraform helm_release 이후) ==="
+  for _ in $(seq 1 72); do
+    if kubectl get crd scaledobjects.keda.sh >/dev/null 2>&1; then
+      break
+    fi
+    sleep 5
+  done
+  kubectl wait --for=condition=established "crd/scaledobjects.keda.sh" --timeout=120s 2>/dev/null || true
+  sed -i "s|awsRegion: ap-northeast-2|awsRegion: ${AWS_REGION}|" "$tmp_k8s/k8s/keda/scaledobject-worker-svc.yaml"
+  echo "=== kubectl apply -k k8s/keda (ScaledObject paused) ==="
+  kubectl apply -k "$tmp_k8s/k8s/keda"
+fi
+
 if [[ "${SYNC_S3_ENDPOINTS:-0}" == "1" ]]; then
   echo "=== sync S3 api-origin.js from Ingress (same apply, no second terraform) ==="
   TICKETING_NAMESPACE="$NS" INGRESS_NAME="$INGRESS_NAME" bash "$REPO_ROOT/k8s/scripts/sync-s3-endpoints-from-ingress.sh"

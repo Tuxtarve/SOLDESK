@@ -6,7 +6,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from cache.redis_client import redis_client
-from db import get_db_connection
+from db import get_db_read_connection
 from movie.movie_cache_builder import (
     MOVIES_LIST_CACHE_KEY, _fetch_movies_from_db, _write_movies_cache,
 )
@@ -107,7 +107,14 @@ def _load_movie_cache_rows():
 
 
 def _fetch_bootstrap_from_db(movie_map):
-    conn = get_db_connection()
+    """
+    극장 예매 화면용 부트스트랩(웜업 대상 데이터).
+
+    포함: 극장·홀·영화 메타(목록 캐시에서 온 공개 필드), 상영 스케줄, 잔여/총좌석,
+         선점 좌석 좌표 \"row-col\" (booking_seats + hall_seats 조인, user_id 등 없음).
+    미포함: 회원 프로필, 예매자 식별, 결제 식별자.
+    """
+    conn = get_db_read_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT theater_id, address FROM theaters ORDER BY theater_id ASC")
@@ -245,26 +252,60 @@ def refresh_theaters_bootstrap_cache():
     }
 
 
-def _build_theater_detail_payload(theater_id):
-    bootstrap = _build_bootstrap_payload()
+def _theater_detail_from_bootstrap(bootstrap: dict, theater_id: int):
+    """단일 부트스트랩 dict에서 극장 상세 슬라이스 (DB 재조회 없음)."""
     theater = None
-    for item in bootstrap["theaters"]:
+    for item in bootstrap.get("theaters") or []:
         if _to_int(item.get("theater_id")) == theater_id:
             theater = item
             break
     if theater is None:
         return None
-    hall_ids = {_to_int(item.get("hall_id")) for item in bootstrap["halls"] if _to_int(item.get("theater_id")) == theater_id}
-    halls = [item for item in bootstrap["halls"] if _to_int(item.get("hall_id")) in hall_ids]
-    schedules = [item for item in bootstrap["schedules"] if _to_int(item.get("hall_id")) in hall_ids]
+    hall_ids = {
+        _to_int(item.get("hall_id"))
+        for item in bootstrap.get("halls") or []
+        if _to_int(item.get("theater_id")) == theater_id
+    }
+    halls = [item for item in bootstrap.get("halls") or [] if _to_int(item.get("hall_id")) in hall_ids]
+    schedules = [item for item in bootstrap.get("schedules") or [] if _to_int(item.get("hall_id")) in hall_ids]
     movie_ids = {_to_int(item.get("movie_id")) for item in schedules}
-    movies = [item for item in bootstrap["movies"] if _to_int(item.get("movie_id")) in movie_ids]
+    movies = [item for item in bootstrap.get("movies") or [] if _to_int(item.get("movie_id")) in movie_ids]
+    sched_ids = {_to_int(item.get("schedule_id")) for item in schedules}
     reserved_seats = {
         key: value
         for key, value in (bootstrap.get("reservedSeats") or {}).items()
-        if _to_int(key) in {_to_int(item.get("schedule_id")) for item in schedules}
+        if _to_int(key) in sched_ids
     }
     return {"theater": theater, "halls": halls, "movies": movies, "schedules": schedules, "reservedSeats": reserved_seats}
+
+
+def _bootstrap_and_theater_detail(theater_id: int):
+    """한 번의 DB 스냅샷으로 부트스트랩 + 극장 상세. 캐시 미스 시 둘을 같이 써야 부트스트랩/상세 불일치가 없음."""
+    bootstrap = _build_bootstrap_payload()
+    return bootstrap, _theater_detail_from_bootstrap(bootstrap, theater_id)
+
+
+def warmup_theaters_booking_caches():
+    """
+    웜업 전용: 영화 메타(이미 movies 캐시에서 로드)·극장·상영·잔여·선점 좌표만 Redis에 적재.
+    극장별 상세 키(theaters:booking:detail:*:v6)는 동일 부트스트랩 1회로 채움 (불필요한 v1 키 없음).
+    """
+    bootstrap = _build_bootstrap_payload()
+    _write_bootstrap_cache(bootstrap)
+    n_detail = 0
+    for t in bootstrap.get("theaters") or []:
+        tid = _to_int(t.get("theater_id"))
+        payload = _theater_detail_from_bootstrap(bootstrap, tid)
+        if payload:
+            _write_theater_detail_cache(tid, payload)
+            n_detail += 1
+    return {
+        "name": "theaters_booking",
+        "bootstrap_key": THEATERS_BOOTSTRAP_CACHE_KEY,
+        "theater_detail_keys": n_detail,
+        "schedule_count": len(bootstrap.get("schedules") or []),
+        "reserved_schedule_keys": len(bootstrap.get("reservedSeats") or {}),
+    }
 
 
 @router.get("/api/read/theaters/bootstrap")
@@ -300,8 +341,9 @@ def get_theater_detail(theater_id: int):
             return json.loads(cached_data)
         except json.JSONDecodeError:
             redis_client.delete(cache_key)
-    payload = _build_theater_detail_payload(theater_id)
+    bootstrap, payload = _bootstrap_and_theater_detail(theater_id)
     if payload is None:
         return JSONResponse(status_code=404, content={"message": "not found"})
+    _write_bootstrap_cache(bootstrap)
     _write_theater_detail_cache(theater_id, payload)
     return payload

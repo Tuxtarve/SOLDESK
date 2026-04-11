@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, Body, Query
 from fastapi.responses import JSONResponse
 
-from db import get_db_connection
+from db import get_db_connection, get_db_read_connection
 
 router = APIRouter()
 
@@ -35,7 +35,7 @@ def get_mypage(user_id: Optional[str] = Query(default=None)):
         user_id_int = int(user_id)
     except (TypeError, ValueError):
         return JSONResponse(status_code=400, content={"message": "invalid input"})
-    conn = get_db_connection()
+    conn = get_db_read_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT user_id, phone, name FROM users WHERE user_id = %s", (user_id_int,))
@@ -53,7 +53,7 @@ def check_phone_duplicate(payload: Optional[Dict[str, Any]] = Body(default=None)
     phone = (data.get("phone") or "").strip()
     if not phone:
         return JSONResponse(status_code=400, content={"message": "invalid input"})
-    conn = get_db_connection()
+    conn = get_db_read_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) AS count FROM users WHERE phone = %s", (phone,))
@@ -71,7 +71,7 @@ def find_password_user(payload: Optional[Dict[str, Any]] = Body(default=None)):
     name = (data.get("name") or "").strip()
     if not phone or not name:
         return JSONResponse(status_code=400, content={"message": "invalid input"})
-    conn = get_db_connection()
+    conn = get_db_read_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT user_id, phone, name FROM users WHERE phone = %s", (phone,))
@@ -98,6 +98,7 @@ def get_recent_bookings(user_id: Optional[str] = Query(default=None)):
         user_id_int = int(user_id)
     except (TypeError, ValueError):
         return JSONResponse(status_code=400, content={"message": "invalid input"})
+    # 예매 직후 내역 노출: 리플리카 지연 방지를 위해 writer 조회(트래픽 소량 구간).
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:

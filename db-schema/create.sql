@@ -155,23 +155,6 @@ CREATE TABLE IF NOT EXISTS payment (
   CONSTRAINT chk_payment_pay_yn CHECK (pay_yn IN ('Y', 'N'))
 );
 
-CREATE TABLE IF NOT EXISTS reviews (
-  review_id BIGINT AUTO_INCREMENT PRIMARY KEY,
-  user_id BIGINT NOT NULL,
-  movie_id BIGINT NOT NULL,
-  rating TINYINT NOT NULL,
-  content TEXT NOT NULL,
-  review_status VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  CONSTRAINT fk_review_user
-    FOREIGN KEY (user_id) REFERENCES users(user_id)
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT fk_review_movie
-    FOREIGN KEY (movie_id) REFERENCES movies(movie_id)
-    ON DELETE CASCADE ON UPDATE CASCADE,
-  CONSTRAINT chk_review_rating CHECK (rating BETWEEN 1 AND 5)
-);
-
 -- =====================================================================
 -- 2) 콘서트/뮤지컬 도메인
 -- =====================================================================
@@ -350,19 +333,5 @@ PREPARE __stmt FROM @__sql; EXECUTE __stmt; DEALLOCATE PREPARE __stmt;
 
 SET @__n := (SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=@__db AND table_name='booking_seats' AND index_name='idx_booking_seats_status');
 SET @__sql := IF(@__n=0,'CREATE INDEX idx_booking_seats_status ON booking_seats(status)','SELECT 1');
-PREPARE __stmt FROM @__sql; EXECUTE __stmt; DEALLOCATE PREPARE __stmt;
-
-
--- reviews
-SET @__n := (SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=@__db AND table_name='reviews' AND index_name='idx_reviews_user_id');
-SET @__sql := IF(@__n=0,'CREATE INDEX idx_reviews_user_id ON reviews(user_id)','SELECT 1');
-PREPARE __stmt FROM @__sql; EXECUTE __stmt; DEALLOCATE PREPARE __stmt;
-
-SET @__n := (SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=@__db AND table_name='reviews' AND index_name='idx_reviews_movie_id');
-SET @__sql := IF(@__n=0,'CREATE INDEX idx_reviews_movie_id ON reviews(movie_id)','SELECT 1');
-PREPARE __stmt FROM @__sql; EXECUTE __stmt; DEALLOCATE PREPARE __stmt;
-
-SET @__n := (SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema=@__db AND table_name='reviews' AND index_name='idx_reviews_status');
-SET @__sql := IF(@__n=0,'CREATE INDEX idx_reviews_status ON reviews(review_status)','SELECT 1');
 PREPARE __stmt FROM @__sql; EXECUTE __stmt; DEALLOCATE PREPARE __stmt;
 

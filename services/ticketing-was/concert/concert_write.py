@@ -1,6 +1,7 @@
 """
 콘서트 예매 쓰기 — SQS FIFO 통합 버전.
-원본: _ShowLockPool(threading.Lock) → SQS FIFO MessageGroupId=show_id
+원본: _ShowLockPool(threading.Lock) → SQS FIFO MessageGroupId=show_id.
+      유저별 그룹(show_id-user_id)으로 분리해 동일 회차라도 타 유저 대량 적체에 GUI 예매가 묻히지 않게 함(DB는 FOR UPDATE 로 좌석 정합성 유지).
 """
 import json
 import secrets
@@ -10,7 +11,7 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER
-from sqs_client import send_booking_message, get_booking_result
+from sqs_client import get_booking_status_dict, send_booking_message
 
 router = APIRouter()
 
@@ -106,7 +107,7 @@ def commit_concert_booking(payload: dict):
 
     booking_ref = send_booking_message(
         booking_type="concert",
-        group_id=str(show_id),
+        group_id=f"{show_id}-{user_id}",
         payload={
             "user_id": user_id,
             "show_id": show_id,
@@ -123,7 +124,4 @@ def commit_concert_booking(payload: dict):
 
 @router.get("/api/write/concerts/booking/status/{booking_ref}")
 def check_concert_booking_status(booking_ref: str):
-    result = get_booking_result(booking_ref)
-    if result is None:
-        return {"status": "PROCESSING", "booking_ref": booking_ref}
-    return result
+    return get_booking_status_dict(booking_ref)

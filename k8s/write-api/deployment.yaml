@@ -20,6 +20,7 @@ spec:
       containers:
         - name: write-api
           image: ticketing/ticketing-was:latest
+          imagePullPolicy: Always
           command: ["uvicorn", "write_app:app", "--host", "0.0.0.0", "--port", "5001"]
           ports:
             - containerPort: 5001

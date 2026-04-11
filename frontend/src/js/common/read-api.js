@@ -20,10 +20,19 @@ async function readApi(path, options = {}) {
     return runtime.getJson(targetPath, options);
   }
 
+  const extraAuth = {};
+  try {
+    const tok = typeof window.__TICKETING_AUTH_BEARER_TOKEN__ === 'string'
+      ? window.__TICKETING_AUTH_BEARER_TOKEN__.trim()
+      : '';
+    if (tok) extraAuth.headers = { Authorization: `Bearer ${tok}` };
+  } catch (e) { /* ignore */ }
+
   const response = await fetch(targetPath, {
     method: 'GET',
     credentials: 'include',
-    cache: options.cache || 'default'
+    cache: options.cache || 'default',
+    ...extraAuth
   });
 
   if (!response.ok) {

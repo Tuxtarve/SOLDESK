@@ -1,0 +1,63 @@
+Python 의존성 (최초 1회)
+pip install boto3 pymysql redis
+
+테스트용 파드 (없으면 생성 / Running 이면 스크립트만 갱신)
+bash ../scripts/tools-once-setup.sh
+
+keda 레플리카 파드
+kubectl annotate scaledobject worker-svc-sqs -n ticketing autoscaling.keda.sh/paused-
+kubectl get pods -n ticketing -l app=worker-svc
+
+토큰 갱신
+kubectl rollout restart deployment/keda-operator -n keda
+
+write 주소 사용 환경변수 (호스트 셸에서 1회 설정)
+export WRITE_API_BASE_URL="$(kubectl get svc write-api -n ticketing -o jsonpath='http://{.metadata.name}.{.metadata.namespace}.svc.cluster.local:{.spec.ports[0].port}')"
+
+루트디렉토리 환경변수 (호스트 셸에서 1회 설정)
+export root_dir="/work/ticketing-db/terraform"
+
+
+콘서트 실좌석. 기본=SQS 직접. --via-was=Write API만. --also-via-was=좌석 반씩 SQS+Write API.
+
+kubectl -n ticketing exec -it tools-once -- sh -c 'export root_dir="/work/ticketing-db/terraform" && cd "$root_dir" && python3 ../scripts/sqs_load_real_concert.py -n 100 --dry-run'
+
+kubectl -n ticketing exec -it tools-once -- sh -c 'export root_dir="/work/ticketing-db/terraform" && cd "$root_dir" && python3 ../scripts/sqs_load_real_concert.py -n 100'
+
+kubectl -n ticketing exec -it tools-once -- sh -c "export WRITE_API_BASE_URL='$WRITE_API_BASE_URL' && export root_dir='$root_dir' && cd \"\$root_dir\" && python3 ../scripts/sqs_load_real_concert.py -n 3000 --spread-users 3000 --also-via-was"
+
+kubectl -n ticketing exec -it tools-once -- sh -c "export WRITE_API_BASE_URL='$WRITE_API_BASE_URL' && export root_dir='$root_dir' && cd \"\$root_dir\" && python3 ../scripts/sqs_load_real_concert.py -n 20 --via-was"
+
+
+극장(영화) 실좌석. 시드 홀 정원 약 30석. 요약 JSON에 영화제목·상영일시·정원.
+
+kubectl -n ticketing exec -it tools-once -- sh -c 'export root_dir="/work/ticketing-db/terraform" && cd "$root_dir" && python3 ../scripts/sqs_load_real_theater.py -n 30 --dry-run'
+
+kubectl -n ticketing exec -it tools-once -- sh -c 'export root_dir="/work/ticketing-db/terraform" && cd "$root_dir" && python3 ../scripts/sqs_load_real_theater.py -n 30'
+
+kubectl -n ticketing exec -it tools-once -- sh -c "export WRITE_API_BASE_URL='$WRITE_API_BASE_URL' && export root_dir='$root_dir' && cd \"\$root_dir\" && python3 ../scripts/sqs_load_real_theater.py -n 15 --also-via-was"
+
+kubectl -n ticketing exec -it tools-once -- sh -c "export WRITE_API_BASE_URL='$WRITE_API_BASE_URL' && export root_dir='$root_dir' && cd \"\$root_dir\" && python3 ../scripts/sqs_load_real_theater.py -n 29 --via-was"
+
+뮤지컬 두 유저 한 좌석 경쟁. 기본 SQS. --via-was 는 Write API 경로.
+
+kubectl -n ticketing exec -it tools-once -- sh -c 'export root_dir="/work/ticketing-db/terraform" && cd "$root_dir" && python3 ../scripts/sqs_race_two_users_musical.py --dry-run'
+
+kubectl -n ticketing exec -it tools-once -- sh -c 'export root_dir="/work/ticketing-db/terraform" && cd "$root_dir" && python3 ../scripts/sqs_race_two_users_musical.py'
+
+kubectl -n ticketing exec -it tools-once -- sh -c 'export root_dir="/work/ticketing-db/terraform" && cd "$root_dir" && python3 ../scripts/sqs_race_two_users_musical.py --seat 3-5'
+
+kubectl -n ticketing exec -it tools-once -- sh -c "export WRITE_API_BASE_URL='$WRITE_API_BASE_URL' && export root_dir='$root_dir' && cd \"\$root_dir\" && python3 ../scripts/sqs_race_two_users_musical.py --via-was"
+
+좌석 여러 개 겹침 + Redis 요약. 붙을 때 export, 아니면 --no-poll 줄만.
+
+export ELASTICACHE_PRIMARY_ENDPOINT="$(terraform output -raw elasticache_primary_endpoint)"
+
+kubectl -n ticketing exec -it tools-once -- sh -c 'export root_dir="/work/ticketing-db/terraform" && cd "$root_dir" && python3 ../scripts/sqs_race_two_users_musical.py --user1-seats 1-2,1-3,1-4 --user2-seats 1-3,1-4,1-5'
+
+kubectl -n ticketing exec -it tools-once -- sh -c 'export root_dir="/work/ticketing-db/terraform" && cd "$root_dir" && python3 ../scripts/sqs_race_two_users_musical.py --user1-seats 1-2,1-3,1-4 --user2-seats 1-3,1-4,1-5 --no-poll'
+
+SQS 큐 URL 확인
+terraform output -raw sqs_queue_url
+
+SQL 검증: ../scripts/sql/*.sql 에서 @show_id 수정 후 mysql 로 실행

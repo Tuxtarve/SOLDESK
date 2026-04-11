@@ -7,9 +7,9 @@
     <link rel="icon" href="data:," />
 
     <!--
-      S3 웹사이트: /api/* 는 ALB와 오리진이 다름. api-origin.js(배포 후 sync로 ALB URL 반영) 또는
-      아래 meta / APP_CONFIG 로 오리진 지정.
-      CloudFront(/api → ALB 프록시): api-origin.js 가 비어 있으면 상대 경로 /api 만 사용(동일 오리진).
+      S3 정적: /api/* 는 페이지 오리진과 다름. api-origin.js(또는 meta)에 ALB 또는 API Gateway 베이스 URL만 넣는 패턴 유지.
+      Cognito 연동 시에도 동일( GW URL을 오리진으로 두고 GW CORS에서 S3 웹 오리진 허용 ).
+      CloudFront로 API까지 한 덩어리로 묶는 방식은 경로/CORS/쿠키 이슈가 잘 나서, 필요 시 아키텍처와 별도 검토 권장.
     -->
     <!--
       API 오리진 우선순위:

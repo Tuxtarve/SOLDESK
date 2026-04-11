@@ -4,18 +4,25 @@
 resource "null_resource" "k8s_bootstrap_after_apply" {
   count = var.run_k8s_bootstrap_after_apply ? 1 : 0
 
-  # module.eks 는 triggers / environment 에서 이미 암시적 의존.
-  # s3 모듈은 스크립트가 terraform output 으로만 버킷을 읽어 암시적 의존이 없으므로 명시 유지.
+  # 시크릿 스크립트가 terraform output 으로 RDS/ElastiCache/SQS 를 읽으므로 반드시 이 모듈들 이후에 실행.
+  # (depends_on 없으면 ElastiCache 생성 전에 bootstrap 이 돌아 redis_endpoint 가 state 에 없을 수 있음)
   depends_on = [
     data.external.terraform_host_exec_clis,
     null_resource.install_aws_load_balancer_controller,
     module.s3_hosting_v2,
     null_resource.db_schema_init,
+    module.rds,
+    module.elasticache,
+    module.sqs,
+    helm_release.keda,
   ]
 
   triggers = {
-    cluster_name  = module.eks.cluster_name
-    kustomization = filemd5(abspath("${path.root}/../k8s/kustomization.yaml"))
+    cluster_name        = module.eks.cluster_name
+    kustomization       = filemd5(abspath("${path.root}/../k8s/kustomization.yaml"))
+    keda_scaledobject   = filemd5(abspath("${path.root}/../k8s/keda/scaledobject-worker-svc.yaml"))
+    keda_triggerauth    = filemd5(abspath("${path.root}/../k8s/keda/triggerauthentication-worker-sqs.yaml"))
+    post_apply_bootstrap_script = filemd5(abspath("${path.root}/scripts/post_apply_k8s_bootstrap.sh"))
   }
 
   provisioner "local-exec" {
@@ -23,6 +30,10 @@ resource "null_resource" "k8s_bootstrap_after_apply" {
     environment = {
       REPO_ROOT                 = abspath("${path.root}/..")
       DB_PASSWORD               = var.db_password
+      # 같은 apply 중 nested `terraform output`은 state 락·sensitive 출력 때문에 실패할 수 있음 → 모듈 값 직접 전달
+      POST_APPLY_RDS_WRITER_ENDPOINT     = nonsensitive(module.rds.writer_endpoint)
+      POST_APPLY_REDIS_PRIMARY_ENDPOINT  = nonsensitive(module.elasticache.redis_endpoint)
+      POST_APPLY_SQS_QUEUE_URL           = module.sqs.reservation_queue_url
       EKS_CLUSTER_NAME          = module.eks.cluster_name
       AWS_REGION                = var.aws_region
       TICKETING_NAMESPACE       = var.ticketing_namespace
@@ -38,6 +49,7 @@ resource "null_resource" "k8s_bootstrap_after_apply" {
       SYNC_S3_ENDPOINTS = (
         var.enable_s3_hosting_v2_module && !var.enable_cloudfront_for_frontend
       ) ? "1" : "0"
+      INSTALL_KEDA = var.install_keda ? "1" : "0"
     }
 
     command = "tr -d '\\r' < \"${path.root}/scripts/post_apply_k8s_bootstrap.sh\" | bash"

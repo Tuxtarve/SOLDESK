@@ -332,9 +332,15 @@
   }
 
   /**
-   * S3 정적 웹사이트와 API(ALB) 호스트가 다를 때: /api/* 요청만 별도 오리진으로 보냄.
-   * 오리진은 /api-origin.js(배포 후 Ingress 기준 sync) 또는 meta / APP_CONFIG — endpoints.json 미사용.
-   * 레거시 호환: read-api.js / write-api.js 가 await 하므로 즉시 resolve.
+   * S3 정적 웹사이트와 API 호스트가 다를 때: /api/* 요청만 별도 오리진으로 보냄.
+   * 오리진은 /api-origin.js(배포 후 sync) 또는 meta / APP_CONFIG — endpoints.json 미사용.
+   *
+   * API Gateway 전환 시: CloudFront로 API까지 한 오리진에 억지로 묶지 말고,
+   * 지금과 동일하게 "프론트 오리진(S3) ≠ API 오리진(GW 또는 ALB)" 이면
+   * __TICKETING_API_ORIGIN__ 에 GW/ALB 베이스 URL만 넣고, GW에서 CORS를 S3 웹 오리진에 맞게 열어 주면 됨.
+   * (CloudFront에서 애먹었던 케이스는 보통 경로 프록시·이중 CORS·쿠키 도메인 불일치 쪽.)
+   *
+   * Cognito: window.__TICKETING_AUTH_BEARER_TOKEN__ 에 access token 넣으면 requestJson이 Authorization 자동 첨부(비어 있으면 무변화).
    */
   async function ensureTicketingEndpointsLoaded() {
     return undefined;
@@ -409,6 +415,16 @@
     const resolvedPath = resolveTicketingApiUrl(url);
     const method = String(opts.method || 'GET').toUpperCase();
     const headers = { ...(opts.headers || {}) };
+    try {
+      const tok = typeof window.__TICKETING_AUTH_BEARER_TOKEN__ === 'string'
+        ? window.__TICKETING_AUTH_BEARER_TOKEN__.trim()
+        : '';
+      if (tok && !headers.Authorization && !headers.authorization) {
+        headers.Authorization = `Bearer ${tok}`;
+      }
+    } catch (e) {
+      /* ignore */
+    }
     // GET/HEAD with Content-Type: application/json triggers a CORS preflight; ALB/배포 이슈 시 OPTIONS가
     // ACAO 없이 실패할 수 있어, 본문 없는 읽기 요청은 simple request로 보냄 (응답 CORS는 그대로 검사됨).
     const hasBody = opts.body !== undefined && opts.body !== null;

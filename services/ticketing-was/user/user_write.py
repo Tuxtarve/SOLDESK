@@ -7,7 +7,6 @@ import pymysql
 from fastapi import APIRouter, Body
 from fastapi.responses import JSONResponse
 
-from cache.redis_client import redis_client
 from config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER
 
 router = APIRouter()
@@ -35,7 +34,7 @@ def _get_tx_connection():
 
 def _refund_movie_booking(user_id: int, booking_id: int):
     """극장(영화) 예매 환불: booking→CANCEL, payment→N, 좌석 반환, 캐시 무효화."""
-    from theater.theaters_read import THEATERS_BOOTSTRAP_CACHE_KEY, refresh_theaters_bootstrap_cache
+    from theater.theaters_read import warmup_theaters_booking_caches
 
     conn = _get_tx_connection()
     try:
@@ -100,8 +99,7 @@ def _refund_movie_booking(user_id: int, booking_id: int):
         conn.close()
 
     try:
-        redis_client.delete(THEATERS_BOOTSTRAP_CACHE_KEY)
-        refresh_theaters_bootstrap_cache()
+        warmup_theaters_booking_caches()
     except Exception:
         pass
 
@@ -110,6 +108,8 @@ def _refund_movie_booking(user_id: int, booking_id: int):
 
 def _refund_concert_booking(user_id: int, booking_id: int):
     """콘서트 예매 환불: concert_booking→CANCEL, concert_payment→N, 좌석 반환."""
+    concert_id_for_cache = 0
+    show_id_for_cache = 0
     conn = _get_tx_connection()
     try:
         with conn.cursor() as cur:
@@ -134,7 +134,17 @@ def _refund_concert_booking(user_id: int, booking_id: int):
                 )
 
             show_id = _to_int(booking.get("show_id"))
+            show_id_for_cache = show_id
             reg_count = _to_int(booking.get("reg_count"))
+
+            if show_id > 0:
+                cur.execute(
+                    "SELECT concert_id FROM concert_shows WHERE show_id = %s LIMIT 1",
+                    (show_id,),
+                )
+                crow = cur.fetchone()
+                if crow:
+                    concert_id_for_cache = _to_int(crow.get("concert_id"))
 
             cur.execute(
                 "UPDATE concert_booking SET book_status = 'CANCEL' WHERE booking_id = %s",
@@ -171,6 +181,17 @@ def _refund_concert_booking(user_id: int, booking_id: int):
         )
     finally:
         conn.close()
+
+    try:
+        from concert.concert_read_cache import invalidate_concert_caches_after_booking
+
+        if concert_id_for_cache > 0:
+            invalidate_concert_caches_after_booking(
+                concert_id_for_cache,
+                show_id=show_id_for_cache if show_id_for_cache > 0 else None,
+            )
+    except Exception:
+        pass
 
     return {"ok": True, "message": "환불이 완료되었습니다."}
 

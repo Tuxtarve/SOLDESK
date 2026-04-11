@@ -21,6 +21,7 @@ spec:
         - name: read-api
           # ECR 전체 경로 (kubectl apply -f 단독 시에도 ErrImagePull 방지). 태그는 kustomization에서 덮어쓸 수 있음.
           image: ticketing/ticketing-was:latest
+          imagePullPolicy: Always
           command: ["uvicorn", "read_app:app", "--host", "0.0.0.0", "--port", "5000"]
           ports:
             - containerPort: 5000
@@ -36,11 +37,18 @@ spec:
             limits:
               memory: "256Mi"
               cpu: "300m"
+          # 첫 Redis 웜업(read_app lifespan)이 끝나야 /health 응답 가능 → 짧은 liveness만 두면 재시작 루프 위험
+          startupProbe:
+            httpGet:
+              path: /api/read/health
+              port: 5000
+            periodSeconds: 10
+            failureThreshold: 36
           livenessProbe:
             httpGet:
               path: /api/read/health
               port: 5000
-            initialDelaySeconds: 10
+            initialDelaySeconds: 15
             periodSeconds: 15
           readinessProbe:
             httpGet:

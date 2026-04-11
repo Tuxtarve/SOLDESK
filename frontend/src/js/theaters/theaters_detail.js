@@ -86,13 +86,9 @@
     unlockBodyScroll();
   }
 
-  /** 예매 커밋 성공 후 사용자가 모달을 닫으면 잔여석·좌석 상태를 서버와 맞추기 위해 전체 새로고침 */
-  function closeModalFromUser(bookingSucceededFlag) {
-    const reload = bookingSucceededFlag === true;
+  /** 모달만 닫음. 잔여석은 theaters_main 의 onBooked + (선택) 극장 상세 재조회로 갱신 — 전체 reload 는 불필요한 버퍼링만 유발 */
+  function closeModalFromUser() {
     closeModal();
-    if (reload) {
-      window.location.reload();
-    }
   }
 
   function getStoredUserId() {
@@ -134,8 +130,6 @@
     const movie = data.movie || {};
     const onBooked = typeof data.onBooked === 'function' ? data.onBooked : function () {};
     const reservedSeats = new Set(Array.isArray(data.reservedSeats) ? data.reservedSeats.map((value) => String(value)) : []);
-
-    let bookingSucceeded = false;
 
     const runtimeMinutes = toInt(movie.runtime_minutes || 120);
     const start = parseDateValue(schedule.show_date);
@@ -373,22 +367,22 @@
     setStep(1);
 
     closeButton.addEventListener('click', function () {
-      closeModalFromUser(bookingSucceeded);
+      closeModalFromUser();
     });
     cancelButton.addEventListener('click', function () {
-      closeModalFromUser(bookingSucceeded);
+      closeModalFromUser();
     });
 
     overlay.addEventListener('click', function (event) {
       if (event.target === overlay) {
-        closeModalFromUser(bookingSucceeded);
+        closeModalFromUser();
       }
     });
 
     document.addEventListener('keydown', function escHandler(event) {
       if (event.key === 'Escape') {
         document.removeEventListener('keydown', escHandler);
-        closeModalFromUser(bookingSucceeded);
+        closeModalFromUser();
       }
     }, { once: true });
 
@@ -426,14 +420,29 @@
         submitButton.textContent = '처리 중...';
 
         try {
-          const result = await requestBooking({
+          const commit = await requestBooking({
             user_id: userId,
             schedule_id: schedule.schedule_id,
             seats: Array.from(selectedSeats)
           });
 
-          if (result && result.ok) {
-            bookingSucceeded = true;
+          let result = commit;
+          if (
+            commit &&
+            commit.ok &&
+            String(commit.code || '') === 'QUEUED' &&
+            commit.booking_ref &&
+            typeof pollAsyncBookingStatus === 'function'
+          ) {
+            submitButton.textContent = '예매 처리 중…';
+            const ref = encodeURIComponent(String(commit.booking_ref).trim());
+            result = await pollAsyncBookingStatus(`/booking/status/${ref}`, {
+              timeoutSec: 600,
+              intervalMs: 400
+            });
+          }
+
+          if (result && result.ok === true && String(result.code || '') === 'OK') {
             const bookingCode = result.booking_code ? String(result.booking_code) : '';
             lastResult = {
               ok: true,
@@ -443,17 +452,30 @@
               schedule_id: schedule.schedule_id,
               selectedSeats: Array.from(selectedSeats)
             });
-          } else {
-            const code = result && result.code ? String(result.code) : 'ERROR';
+          } else if (result && result.ok === false) {
+            const code = result.code ? String(result.code) : 'ERROR';
             if (code === 'DUPLICATE_SEAT') {
               lastResult = { ok: false, message: '중복좌석입니다.' };
             } else if (code === 'SOLD_OUT') {
               lastResult = { ok: false, message: '매진입니다.' };
             } else if (code === 'INVALID_SEAT' || code === 'BAD_SEAT_KEY') {
               lastResult = { ok: false, message: '좌석 정보가 올바르지 않습니다. 새로고침 후 다시 시도해주세요.' };
+            } else if (code === 'TIMEOUT') {
+              lastResult = { ok: false, message: result.message || '처리 시간이 초과되었습니다. 마이페이지에서 예매 내역을 확인해 주세요.' };
+            } else if (code === 'NOT_FOUND') {
+              lastResult = { ok: false, message: '상영 회차를 찾을 수 없습니다.' };
+            } else if (code === 'ERROR') {
+              lastResult = { ok: false, message: result.message || '예매 처리 중 오류가 발생했습니다.' };
             } else {
               lastResult = { ok: false, message: '결제 실패' };
             }
+          } else if (result && (result.status === 'UNKNOWN_OR_EXPIRED' || result.status === 'INVALID_REF')) {
+            lastResult = {
+              ok: false,
+              message: result.message || '요청을 찾을 수 없습니다. 다시 시도해 주세요.'
+            };
+          } else {
+            lastResult = { ok: false, message: '결제 실패' };
           }
 
           if (window.APP_RUNTIME && typeof window.APP_RUNTIME.notifyReadCacheRebuilt === 'function') {
@@ -487,13 +509,12 @@
       }
 
       if (currentStep === 3) {
-        closeModalFromUser(bookingSucceeded);
+        closeModalFromUser();
       }
     });
 
     if (reselectButton) {
       reselectButton.addEventListener('click', function () {
-        bookingSucceeded = false;
         setStep(1);
       });
     }

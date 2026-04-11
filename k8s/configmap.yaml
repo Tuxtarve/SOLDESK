@@ -3,9 +3,50 @@ kind: ConfigMap
 metadata:
   name: ticketing-config
 data:
+  # SQS/boto3/KEDA ScaledObject(awsRegion)와 동일 리전으로 맞출 것 (terraform aws_region).
+  AWS_REGION: "ap-northeast-2"
   DB_NAME: "ticketing"
   DB_PORT: "3306"
   REDIS_PORT: "6379"
+  # R/O 리플리카 도입 전까지 false. true + Secret 의 DB_READER_HOST 분리 시에만 리더 접속.
+  DB_READ_REPLICA_ENABLED: "false"
+  # read-api: 시작 직후 Redis 웜업(기존 로컬 systemd 1분×5회와 동일 취지). CACHE_ENABLED=false면 무시.
+  CACHE_ENABLED: "true"
+  CACHE_WARMUP_ENABLED: "true"
+  CACHE_WARMUP_TOTAL_RUNS: "5"
+  CACHE_WARMUP_INTERVAL_SEC: "60"
+  # true면 주기 웜업(위 interval)에서 영화·극장 전체 리빌드 생략, 콘서트만 갱신
+  CACHE_WARMUP_REPEAT_LIGHT: "false"
+  # ElastiCache: Pod당 연결 상한·타임아웃(초). 0은 해당 옵션 미사용.
+  REDIS_MAX_CONNECTIONS: "50"
+  REDIS_SOCKET_TIMEOUT_SEC: "5"
+  REDIS_CONNECT_TIMEOUT_SEC: "3"
+  REDIS_HEALTH_CHECK_INTERVAL_SEC: "30"
+  # 단일 ElastiCache 노드 내 논리 DB (조회 캐시 vs SQS 예매 상태). flushdb 범위 분리.
+  ELASTICACHE_LOGICAL_DB_CACHE: "0"
+  ELASTICACHE_LOGICAL_DB_BOOKING: "1"
+  # SQS+예매 사용 시 앱이 자동으로 예매 상태 캐시를 켬(write-api·worker 동일 규칙). SQS 끄면 의미 있음.
+  BOOKING_STATE_ENABLED: "true"
+  # 콘서트: minimal=기동 시 공연 목록만 Redis / full=공연별 상세 키까지 일괄 웜업
+  CONCERT_CACHE_WARMUP_MODE: "minimal"
+  # 부트스트랩 시 회차 행 목록 캐시 TTL(초). 0이면 매 요청 DB 조회.
+  CONCERT_SHOWS_META_TTL_SEC: "120"
+  # 공연 목록·상세 Redis TTL(초). 0=만료 없음. 대규모 오픈 시 목록만 300~600 등 검토.
+  CONCERTS_LIST_CACHE_TTL_SEC: "0"
+  CONCERT_DETAIL_CACHE_TTL_SEC: "0"
+  # SQS (write-api sqs_client + worker-svc 공통 boto 재시도)
+  SQS_BOTO_MAX_ATTEMPTS: "5"
+  SQS_BOTO_RETRY_MODE: "adaptive"
+  SQS_CONNECT_TIMEOUT_SEC: "5"
+  SQS_READ_TIMEOUT_SEC: "30"
+  # worker-svc 수신 (FIFO는 한 번에 서로 다른 그룹 최대 10개까지)
+  SQS_RECEIVE_MAX_MESSAGES: "10"
+  # 배치로 받은 메시지를 동시에 처리(그룹당 최대 1개/Receive이므로 순서 안전). GUI 대기 단축.
+  WORKER_SQS_BATCH_CONCURRENCY: "10"
+  SQS_WAIT_TIME_SECONDS: "20"
+  SQS_POLL_ERROR_BACKOFF_SEC: "3"
+  # SQS 수락 후 폴링용 Redis queued 키 TTL(초). 큐 적체 시각보다 길게 두는 것이 안전.
+  BOOKING_QUEUED_TTL_SEC: "7200"
 ---
 # Secrets는 kubectl로 별도 생성:
 # kubectl create secret generic ticketing-secrets \
@@ -13,6 +54,7 @@ data:
 #   --from-literal=DB_READER_HOST=<rds-reader-endpoint> \
 #   --from-literal=DB_USER=root \
 #   --from-literal=DB_PASSWORD=<YOUR_DB_PASSWORD> \
+#   --from-literal=ELASTICACHE_PRIMARY_ENDPOINT=<elasticache-endpoint> \
 #   --from-literal=REDIS_HOST=<elasticache-endpoint> \
 #   --from-literal=SQS_QUEUE_URL=<sqs-fifo-url> \
 #   -n ticketing

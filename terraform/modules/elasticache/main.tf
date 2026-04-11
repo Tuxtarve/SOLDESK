@@ -5,10 +5,11 @@ resource "aws_elasticache_subnet_group" "main" {
 
 resource "aws_elasticache_replication_group" "redis" {
   replication_group_id = "ticketing-redis"
-  description          = "Ticketing Redis replication group (test-min cost)"
+  # AWS: description must be printable ASCII only (no CJK / control chars).
+  description          = "Ticketing ElastiCache Redis single-node cache"
   engine               = "redis"
   engine_version       = "7.0"
-  node_type            = "cache.t3.micro"
+  node_type            = var.node_type
   port                 = 6379
 
   # Single node (no replica) to minimize cost

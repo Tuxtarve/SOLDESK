@@ -97,6 +97,19 @@
     };
   }
 
+  /** 라우터 기준: 지금 URL이 영화 «목록 그리드»일 때만 true (콘서트·상세·예매·홈과 구분) */
+  function isMovieMainListRoute() {
+    if (typeof window.appGetRoute !== 'function') return false;
+    const r = window.appGetRoute();
+    if (String(r.view || '').trim()) return false;
+    if (r.movie_id) return false;
+    if (r.concert_id || r.c_page || String(r.c_q || '').trim()) return false;
+    const p = Number(r.page);
+    if (Number.isFinite(p) && p > 0) return true;
+    if (String(r.q || '').trim()) return true;
+    return false;
+  }
+
   function normalizeSearchKeyword(value) {
     return String(value || '')
       .trim()
@@ -363,7 +376,8 @@
     `;
 
     try {
-      allMovies = await loadMovies(false);
+      // 예매/쓰기 직후 돌아올 때 브라우저 캐시된 GET /movies 를 쓰지 않도록 콘서트 쪽과 같이 no-store
+      allMovies = await loadMovies(true);
       const route = getRoute();
       currentKeyword = route.q || '';
       const filteredMovies = applySearch(currentKeyword);
@@ -401,6 +415,8 @@
   window.handleMovieRoute = mountMovieMain;
 
   async function refetchMoviesAfterCacheRebuild() {
+    if (!isMovieMainListRoute()) return;
+
     const wrap = document.querySelector('.movie-main-wrap');
     if (!wrap || wrap.querySelector('.movie-main-loading')) return;
 

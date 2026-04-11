@@ -60,16 +60,20 @@ module "elasticache" {
   env               = var.env
   subnet_ids        = module.network.private_subnet_ids
   security_group_id = module.network.redis_sg_id
+  node_type         = var.elasticache_node_type
   depends_on        = [module.network]
 }
 
 module "rds" {
-  source            = "./modules/rds"
-  env               = var.env
-  subnet_ids        = module.network.private_subnet_ids
-  security_group_id = module.network.rds_sg_id
-  db_password       = var.db_password
-  depends_on        = [module.network]
+  source                = "./modules/rds"
+  env                   = var.env
+  subnet_ids            = module.network.private_subnet_ids
+  security_group_id     = module.network.rds_sg_id
+  db_password           = var.db_password
+  writer_instance_class = var.rds_writer_instance_class
+  allocated_storage     = var.rds_allocated_storage_gb
+  max_allocated_storage = var.rds_max_allocated_storage_gb
+  depends_on            = [module.network]
 }
 
 resource "null_resource" "db_schema_init" {
@@ -110,15 +114,19 @@ resource "null_resource" "db_schema_init" {
 }
 
 module "eks" {
-  source            = "./modules/eks"
-  env               = var.env
-  aws_region        = var.aws_region
-  vpc_id            = module.network.vpc_id
-  subnet_ids        = module.network.public_subnet_ids
-  security_group_id = module.network.eks_sg_id
-  cluster_name      = var.eks_cluster_name
-  sqs_queue_arns    = [module.sqs.reservation_queue_arn, module.sqs.reservation_dlq_arn]
-  depends_on        = [module.network]
+  source                  = "./modules/eks"
+  env                     = var.env
+  aws_region              = var.aws_region
+  vpc_id                  = module.network.vpc_id
+  subnet_ids              = module.network.public_subnet_ids
+  security_group_id       = module.network.eks_sg_id
+  cluster_name            = var.eks_cluster_name
+  sqs_queue_arns          = [module.sqs.reservation_queue_arn, module.sqs.reservation_dlq_arn]
+  app_node_instance_types = var.eks_app_node_instance_types
+  app_node_desired_size   = var.eks_app_node_desired_size
+  app_node_min_size       = var.eks_app_node_min_size
+  app_node_max_size       = var.eks_app_node_max_size
+  depends_on              = [module.network]
 }
 
 module "s3_hosting_v2" {

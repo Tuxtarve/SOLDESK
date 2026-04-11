@@ -672,13 +672,29 @@
         submitButton.textContent = '처리 중...';
 
         try {
-          const result = await requestConcertBooking({
+          const commit = await requestConcertBooking({
             user_id: userId,
             show_id: showId,
             seats: Array.from(selectedSeats)
           });
 
-          if (result && result.ok) {
+          let result = commit;
+          if (
+            commit &&
+            commit.ok &&
+            String(commit.code || '') === 'QUEUED' &&
+            commit.booking_ref &&
+            typeof pollAsyncBookingStatus === 'function'
+          ) {
+            submitButton.textContent = '예매 처리 중…';
+            const ref = encodeURIComponent(String(commit.booking_ref).trim());
+            result = await pollAsyncBookingStatus(`/concerts/booking/status/${ref}`, {
+              timeoutSec: 600,
+              intervalMs: 400
+            });
+          }
+
+          if (result && result.ok === true && String(result.code || '') === 'OK') {
             bookingSucceeded = true;
             const bookingCode = result.booking_code ? String(result.booking_code) : '';
             lastResult = {
@@ -689,17 +705,30 @@
               show_id: showId,
               selectedSeats: Array.from(selectedSeats)
             });
-          } else {
-            const code = result && result.code ? String(result.code) : 'ERROR';
+          } else if (result && result.ok === false) {
+            const code = result.code ? String(result.code) : 'ERROR';
             if (code === 'DUPLICATE_SEAT') {
               lastResult = { ok: false, message: '중복좌석입니다.' };
             } else if (code === 'SOLD_OUT') {
               lastResult = { ok: false, message: '매진입니다.' };
             } else if (code === 'INVALID_SEAT' || code === 'BAD_SEAT_KEY') {
               lastResult = { ok: false, message: '좌석 정보가 올바르지 않습니다. 새로고침 후 다시 시도해주세요.' };
+            } else if (code === 'TIMEOUT') {
+              lastResult = { ok: false, message: result.message || '처리 시간이 초과되었습니다. 마이페이지에서 예매 내역을 확인해 주세요.' };
+            } else if (code === 'NOT_FOUND') {
+              lastResult = { ok: false, message: '회차를 찾을 수 없습니다.' };
+            } else if (code === 'ERROR') {
+              lastResult = { ok: false, message: result.message || '예매 처리 중 오류가 발생했습니다.' };
             } else {
               lastResult = { ok: false, message: '결제 실패' };
             }
+          } else if (result && (result.status === 'UNKNOWN_OR_EXPIRED' || result.status === 'INVALID_REF')) {
+            lastResult = {
+              ok: false,
+              message: result.message || '요청을 찾을 수 없습니다. 다시 시도해 주세요.'
+            };
+          } else {
+            lastResult = { ok: false, message: '결제 실패' };
           }
 
           setStep(3);

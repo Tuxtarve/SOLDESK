@@ -400,7 +400,6 @@
 
   function renderMovieDetailView(mount, payload) {
     const movie = payload && payload.movie ? payload.movie : {};
-    const reviews = Array.isArray(payload && payload.reviews) ? payload.reviews : [];
     const posterUrl = resolvePosterUrl(movie);
 
     const topSynopsis = movie.synopsis || movie.synopsis_line || '줄거리 정보가 없습니다.';
@@ -455,7 +454,6 @@
 
         <nav class="movie-detail-tab-bar">
           <a href="#movie-detail-info" class="movie-detail-tab active">상세정보</a>
-          <a href="#" class="movie-detail-tab">관람평 (${escapeHtml(formatAudienceCount(reviews.length))})</a>
         </nav>
 
         <section id="movie-detail-info" class="movie-detail-section">

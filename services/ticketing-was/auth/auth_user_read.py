@@ -4,7 +4,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, Body
 from fastapi.responses import JSONResponse
 
-from db import get_db_connection
+from db import get_db_read_connection
 
 router = APIRouter()
 
@@ -21,7 +21,7 @@ def auth_login(payload: Optional[Dict[str, Any]] = Body(default=None)):
     if not phone or not password:
         return JSONResponse(status_code=400, content={"message": "invalid input"})
     request_password_hash = make_password_hash(password)
-    conn = get_db_connection()
+    conn = get_db_read_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT user_id, phone, name, password_hash FROM users WHERE phone = %s", (phone,))
@@ -45,7 +45,7 @@ def auth_check_phone_duplicate(payload: Optional[Dict[str, Any]] = Body(default=
     phone = (data.get("phone") or "").strip()
     if not phone:
         return JSONResponse(status_code=400, content={"message": "invalid input"})
-    conn = get_db_connection()
+    conn = get_db_read_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) AS count FROM users WHERE phone = %s", (phone,))
@@ -63,7 +63,7 @@ def auth_find_password_user(payload: Optional[Dict[str, Any]] = Body(default=Non
     name = (data.get("name") or "").strip()
     if not phone or not name:
         return JSONResponse(status_code=400, content={"message": "invalid input"})
-    conn = get_db_connection()
+    conn = get_db_read_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT user_id, phone, name FROM users WHERE phone = %s", (phone,))

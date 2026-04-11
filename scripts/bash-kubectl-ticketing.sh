@@ -1,6 +1,9 @@
 # Ticketing kubectl shortcuts for bash.
-# Add to ~/.bashrc:
-#   export TICKETING_REPO_ROOT="/path/to/your/repo"
+# terraform/ 에서: source ../scripts/bash-kubectl-ticketing.sh
+# 저장소 루트에서: source scripts/bash-kubectl-ticketing.sh
+#
+# 로그인 셸에 항상 넣으려면 클론 루트를 한 번 지정:
+#   export TICKETING_REPO_ROOT="$HOME/.../ticketing-db"
 #   source "$TICKETING_REPO_ROOT/scripts/bash-kubectl-ticketing.sh"
 #
 # Usage (no leading $ — that is for variables, not commands):

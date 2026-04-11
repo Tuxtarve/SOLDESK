@@ -16,15 +16,47 @@ if [ -z "${DB_PASSWORD}" ]; then
   exit 1
 fi
 
-DB_WRITER="$(terraform -chdir="$TF_DIR" output -raw rds_writer_endpoint)"
-REDIS_EP="$(terraform -chdir="$TF_DIR" output -raw redis_endpoint)"
-SQS_URL="$(terraform -chdir="$TF_DIR" output -raw sqs_queue_url)"
+# post_apply local-exec 는 POST_APPLY_* 로 엔드포인트를 넘김(동일 apply 내 terraform output 회피).
+if [ -n "${POST_APPLY_RDS_WRITER_ENDPOINT:-}" ]; then
+  DB_WRITER="$POST_APPLY_RDS_WRITER_ENDPOINT"
+else
+  DB_WRITER="$(terraform -chdir="$TF_DIR" output -raw rds_writer_endpoint)"
+fi
 
+if [ -n "${POST_APPLY_REDIS_PRIMARY_ENDPOINT:-}" ]; then
+  REDIS_EP="$POST_APPLY_REDIS_PRIMARY_ENDPOINT"
+elif REDIS_EP="$(terraform -chdir="$TF_DIR" output -raw redis_endpoint 2>/dev/null)"; then
+  :
+elif REDIS_EP="$(terraform -chdir="$TF_DIR" output -raw elasticache_primary_endpoint 2>/dev/null)"; then
+  :
+else
+  REGION_USE="${AWS_REGION:-${AWS_DEFAULT_REGION:-ap-northeast-2}}"
+  if REDIS_EP="$(aws elasticache describe-replication-groups \
+    --region "$REGION_USE" \
+    --replication-group-id ticketing-redis \
+    --query 'ReplicationGroups[0].NodeGroups[0].PrimaryEndpoint.Address' \
+    --output text 2>/dev/null)" && [ -n "$REDIS_EP" ] && [ "$REDIS_EP" != "None" ]; then
+    :
+  else
+    echo "ERROR: Redis 엔드포인트를 알 수 없음 (POST_APPLY_REDIS_PRIMARY_ENDPOINT / terraform output / AWS CLI). ElastiCache apply 후 재시도하세요." >&2
+    exit 1
+  fi
+fi
+
+if [ -n "${POST_APPLY_SQS_QUEUE_URL:-}" ]; then
+  SQS_URL="$POST_APPLY_SQS_QUEUE_URL"
+else
+  SQS_URL="$(terraform -chdir="$TF_DIR" output -raw sqs_queue_url)"
+fi
+
+# DB_READER_HOST: 단일 RDS 시 writer 와 동일. Replica 생기면 rds_reader_endpoint 로 분리.
+# Read replica 를 실제로 쓰려면 ConfigMap 등에서 DB_READ_REPLICA_ENABLED=true 로 켠 뒤에만 리더 접속.
 kubectl create secret generic "$SECRET_NAME" -n "$NAMESPACE" \
   --from-literal=DB_WRITER_HOST="$DB_WRITER" \
   --from-literal=DB_READER_HOST="$DB_WRITER" \
   --from-literal=DB_USER="root" \
   --from-literal=DB_PASSWORD="$DB_PASSWORD" \
+  --from-literal=ELASTICACHE_PRIMARY_ENDPOINT="$REDIS_EP" \
   --from-literal=REDIS_HOST="$REDIS_EP" \
   --from-literal=SQS_QUEUE_URL="$SQS_URL" \
   --dry-run=client -o yaml \

@@ -13,6 +13,11 @@ output "redis_endpoint" {
   sensitive = true
 }
 
+output "elasticache_primary_endpoint" {
+  value     = module.elasticache.elasticache_primary_endpoint
+  sensitive = true
+}
+
 output "sqs_queue_url" {
   value = module.sqs.reservation_queue_url
 }
@@ -35,6 +40,11 @@ output "cluster_autoscaler_role_arn" {
 
 output "sqs_access_role_arn" {
   value = module.eks.sqs_access_role_arn
+}
+
+output "keda_operator_role_arn" {
+  description = "IRSA for KEDA operator (SQS scaler). Helm release sets keda:keda-operator SA annotation."
+  value       = module.eks.keda_operator_role_arn
 }
 
 output "aws_region" {

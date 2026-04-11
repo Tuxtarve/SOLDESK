@@ -1,7 +1,13 @@
+"""
+영화 read 캐시 (웜업 대상).
+
+영화 메타 + 상영(schedules) 집계·잔여 등 공개 필드만 Redis에 적재. 회원·예매자 정보 없음.
+DB는 get_db_read_connection() (기본 writer; DB_READ_REPLICA_ENABLED 시 리더 우선).
+"""
 import json
 from datetime import date, datetime
 
-from db import get_db_connection
+from db import get_db_read_connection
 from cache.redis_client import redis_client
 
 MOVIES_LIST_CACHE_KEY = "movies:list:active_or_dummytitle:v5"
@@ -63,7 +69,7 @@ def _write_movie_detail_cache(movie_id, result):
 
 
 def _fetch_movies_from_db():
-    conn = get_db_connection()
+    conn = get_db_read_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -89,7 +95,7 @@ def _fetch_movies_from_db():
 
 
 def _fetch_movie_detail_from_db(movie_id):
-    conn = get_db_connection()
+    conn = get_db_read_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("""
@@ -131,7 +137,7 @@ def refresh_movie_detail_cache(movie_id):
 
 def rebuild_movie_cache():
     list_result = refresh_movies_cache()
-    conn = get_db_connection()
+    conn = get_db_read_connection()
     try:
         with conn.cursor() as cur:
             cur.execute("""

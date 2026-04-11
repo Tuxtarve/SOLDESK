@@ -1,0 +1,12 @@
+# SQS 메트릭 조회는 KEDA operator Pod 가 수행 → operator SA(keda:keda-operator)에 IRSA (terraform helm values).
+# aws-eks + workload 는 operator 에서 STS/IMDS 실패하는 경우가 많음 → identityOwner: operator 권장.
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-worker-sqs-aws
+  labels:
+    app: worker-svc
+spec:
+  podIdentity:
+    provider: aws
+    identityOwner: operator

@@ -5,13 +5,11 @@ from cors_ensure_middleware import EnsureCrossOriginCredentialsMiddleware
 from auth.auth_user_write import router as auth_user_write_router
 from concert.concert_write import router as concert_write_router
 from cache.cache_builder import router as cache_builder_router
-from review.review_write import router as review_write_router
 from theater.theaters_write import router as theaters_write_router
 from user.user_write import router as user_write_router
 
 WRITE_ROUTERS = [
     user_write_router,
-    review_write_router,
     auth_user_write_router,
     theaters_write_router,
     concert_write_router,
