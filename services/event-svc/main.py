@@ -186,6 +186,7 @@ async def get_seats(event_id: str):
 
 # ── Prometheus 메트릭 엔드포인트 ──────────────────────────────────────────────
 @app.get("/metrics")
+@app.get("/event-metrics")
 async def metrics():
     return Response(content=generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
 

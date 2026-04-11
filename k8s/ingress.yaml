@@ -8,6 +8,7 @@ metadata:
     alb.ingress.kubernetes.io/scheme: internet-facing
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
+    alb.ingress.kubernetes.io/healthcheck-path: /health
 spec:
   ingressClassName: alb
   rules:
@@ -41,3 +42,24 @@ spec:
                 name: event-svc
                 port:
                   number: 3000
+          - path: /event-metrics
+            pathType: Prefix
+            backend:
+              service:
+                name: event-svc
+                port:
+                  number: 3000
+          - path: /reserv-metrics
+            pathType: Prefix
+            backend:
+              service:
+                name: reserv-svc
+                port:
+                  number: 3001
+          - path: /worker-metrics
+            pathType: Prefix
+            backend:
+              service:
+                name: worker-svc
+                port:
+                  number: 3002

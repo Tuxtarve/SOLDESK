@@ -68,7 +68,7 @@ async def process_message(msg: dict):
             await conn.rollback()
             log.warning("좌석 이미 선점됨: reservationId=%s", reservation_id)
             processed_total.labels(result="seat_conflict").inc()
-            delete_message(msg["ReceiptHandle"])
+            await delete_message(msg["ReceiptHandle"])
             return
 
         total_price = sum(row[1] for row in seat_rows)
@@ -108,14 +108,16 @@ async def process_message(msg: dict):
         processed_total.labels(result="error").inc()
         log.error("메시지 처리 실패: %s", e)
     finally:
-        delete_message(msg.get("ReceiptHandle"))
+        await delete_message(msg.get("ReceiptHandle"))
         elapsed = (time.time() - start) * 1000
         process_duration.observe(elapsed)
 
 
-def delete_message(receipt_handle: str):
+async def delete_message(receipt_handle: str):
     try:
-        sqs_client.delete_message(QueueUrl=SQS_URL, ReceiptHandle=receipt_handle)
+        await asyncio.to_thread(
+            sqs_client.delete_message, QueueUrl=SQS_URL, ReceiptHandle=receipt_handle,
+        )
     except Exception as e:
         log.error("SQS 삭제 실패: %s", e)
 
@@ -124,7 +126,8 @@ async def poll_sqs():
     global running
     while running:
         try:
-            resp = sqs_client.receive_message(
+            resp = await asyncio.to_thread(
+                sqs_client.receive_message,
                 QueueUrl=SQS_URL,
                 MaxNumberOfMessages=5,
                 WaitTimeSeconds=20,
@@ -183,6 +186,7 @@ async def health():
 
 
 @app.get("/metrics")
+@app.get("/worker-metrics")
 async def metrics():
     return Response(content=generate_latest(REGISTRY), media_type=CONTENT_TYPE_LATEST)
 
