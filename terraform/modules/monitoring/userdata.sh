@@ -47,7 +47,7 @@ services:
       - "3000:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=root
-      - GF_SECURITY_ADMIN_PASSWORD=admin1234
+      - GF_SECURITY_ADMIN_PASSWORD=soldesk1.
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_SERVER_ROOT_URL=http://%(domain)s:3000/
     volumes:

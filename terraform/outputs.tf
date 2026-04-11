@@ -79,7 +79,7 @@ output "prometheus_url" {
 }
 
 output "grafana_url" {
-  description = "Grafana Dashboard (root / admin1234)"
+  description = "Grafana Dashboard (root / soldesk1.)"
   value       = "http://${module.monitoring.public_ip}:3000"
 }
 
