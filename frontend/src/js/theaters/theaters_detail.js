@@ -86,6 +86,15 @@
     unlockBodyScroll();
   }
 
+  /** 예매 커밋 성공 후 사용자가 모달을 닫으면 잔여석·좌석 상태를 서버와 맞추기 위해 전체 새로고침 */
+  function closeModalFromUser(bookingSucceededFlag) {
+    const reload = bookingSucceededFlag === true;
+    closeModal();
+    if (reload) {
+      window.location.reload();
+    }
+  }
+
   function getStoredUserId() {
     if (window.APP_RUNTIME && typeof window.APP_RUNTIME.getStoredUserId === 'function') {
       const raw = String(window.APP_RUNTIME.getStoredUserId() || '').trim();
@@ -125,6 +134,8 @@
     const movie = data.movie || {};
     const onBooked = typeof data.onBooked === 'function' ? data.onBooked : function () {};
     const reservedSeats = new Set(Array.isArray(data.reservedSeats) ? data.reservedSeats.map((value) => String(value)) : []);
+
+    let bookingSucceeded = false;
 
     const runtimeMinutes = toInt(movie.runtime_minutes || 120);
     const start = parseDateValue(schedule.show_date);
@@ -361,19 +372,23 @@
     updateSummary();
     setStep(1);
 
-    closeButton.addEventListener('click', closeModal);
-    cancelButton.addEventListener('click', closeModal);
+    closeButton.addEventListener('click', function () {
+      closeModalFromUser(bookingSucceeded);
+    });
+    cancelButton.addEventListener('click', function () {
+      closeModalFromUser(bookingSucceeded);
+    });
 
     overlay.addEventListener('click', function (event) {
       if (event.target === overlay) {
-        closeModal();
+        closeModalFromUser(bookingSucceeded);
       }
     });
 
     document.addEventListener('keydown', function escHandler(event) {
       if (event.key === 'Escape') {
         document.removeEventListener('keydown', escHandler);
-        closeModal();
+        closeModalFromUser(bookingSucceeded);
       }
     }, { once: true });
 
@@ -418,6 +433,7 @@
           });
 
           if (result && result.ok) {
+            bookingSucceeded = true;
             const bookingCode = result.booking_code ? String(result.booking_code) : '';
             lastResult = {
               ok: true,
@@ -471,12 +487,13 @@
       }
 
       if (currentStep === 3) {
-        closeModal();
+        closeModalFromUser(bookingSucceeded);
       }
     });
 
     if (reselectButton) {
       reselectButton.addEventListener('click', function () {
+        bookingSucceeded = false;
         setStep(1);
       });
     }

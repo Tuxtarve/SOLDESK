@@ -1,1 +1,4 @@
-*.sh text eol=lf
+# Checkout/commit 시 줄 끝 고정 — Windows 편집기·공유 폴더에서 CRLF가 섞여 bash/terraform local-exec 가 깨지는 것을 방지.
+*.sh     text eol=lf
+*.tf     text eol=lf
+*.tfvars text eol=lf

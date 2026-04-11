@@ -257,10 +257,10 @@
 
       if (result && result.success) {
         alert('환불이 완료되었습니다.');
-        await loadBookings(currentPage);
         if (runtime && typeof runtime.notifyReadCacheRebuilt === 'function') {
           runtime.notifyReadCacheRebuilt();
         }
+        window.location.reload();
       } else {
         alert(result.message || '환불 처리에 실패했습니다.');
       }

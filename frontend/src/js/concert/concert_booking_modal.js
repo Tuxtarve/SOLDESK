@@ -112,6 +112,13 @@
     unlockBodyScroll();
   }
 
+  function closeModalFromUser(bookingSucceededFlag) {
+    closeModal();
+    if (bookingSucceededFlag === true) {
+      window.location.reload();
+    }
+  }
+
   function getStoredUserId() {
     if (window.APP_RUNTIME && typeof window.APP_RUNTIME.getStoredUserId === 'function') {
       const raw = String(window.APP_RUNTIME.getStoredUserId() || '').trim();
@@ -167,6 +174,7 @@
     const selectedSeats = new Set();
     let currentStep = 1;
     let lastResult = null;
+    let bookingSucceeded = false;
 
     const overlay = document.createElement('div');
     overlay.id = OVERLAY_ID;
@@ -606,12 +614,16 @@
     updateSummary();
     setStep(1);
 
-    closeButton.addEventListener('click', closeModal);
-    cancelButton.addEventListener('click', closeModal);
+    closeButton.addEventListener('click', function () {
+      closeModalFromUser(bookingSucceeded);
+    });
+    cancelButton.addEventListener('click', function () {
+      closeModalFromUser(bookingSucceeded);
+    });
 
     overlay.addEventListener('click', function (event) {
       if (event.target === overlay) {
-        closeModal();
+        closeModalFromUser(bookingSucceeded);
       }
     });
 
@@ -620,7 +632,7 @@
       function escHandler(event) {
         if (event.key === 'Escape') {
           document.removeEventListener('keydown', escHandler);
-          closeModal();
+          closeModalFromUser(bookingSucceeded);
         }
       },
       { once: true }
@@ -667,6 +679,7 @@
           });
 
           if (result && result.ok) {
+            bookingSucceeded = true;
             const bookingCode = result.booking_code ? String(result.booking_code) : '';
             lastResult = {
               ok: true,
@@ -716,12 +729,13 @@
       }
 
       if (currentStep === 3) {
-        closeModal();
+        closeModalFromUser(bookingSucceeded);
       }
     });
 
     if (reselectButton) {
       reselectButton.addEventListener('click', function () {
+        bookingSucceeded = false;
         setStep(1);
       });
     }

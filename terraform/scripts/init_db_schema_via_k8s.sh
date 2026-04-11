@@ -8,11 +8,21 @@ set -euo pipefail
 : "${DB_NAME:?DB_NAME required}"
 : "${CREATE_SQL:?CREATE_SQL required}"
 : "${INSERT_SQL:?INSERT_SQL required}"
+: "${EKS_CLUSTER_NAME:?EKS_CLUSTER_NAME required (set by Terraform null_resource.db_schema_init)}"
+: "${AWS_REGION:?AWS_REGION required}"
 
-if ! command -v kubectl >/dev/null 2>&1; then
-  echo "kubectl not found. Install kubectl and ensure kubeconfig points to the EKS cluster."
-  exit 1
+if ! command -v aws >/dev/null 2>&1; then
+  echo "ERROR: aws CLI not found. Install AWS CLI and retry." >&2
+  exit 127
 fi
+if ! command -v kubectl >/dev/null 2>&1; then
+  echo "ERROR: kubectl not found. Install kubectl (https://kubernetes.io/docs/tasks/tools/) and retry." >&2
+  echo "      Terraform apply must run on a host that can reach the EKS API." >&2
+  exit 127
+fi
+
+echo "=== kubeconfig: ${EKS_CLUSTER_NAME} (${AWS_REGION}) ==="
+aws eks update-kubeconfig --name "${EKS_CLUSTER_NAME}" --region "${AWS_REGION}"
 
 if [ ! -f "$CREATE_SQL" ]; then
   echo "create.sql not found at: $CREATE_SQL"

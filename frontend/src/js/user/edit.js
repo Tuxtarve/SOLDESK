@@ -197,11 +197,8 @@
           await window.refreshSiteHeader();
         }
 
-        if (typeof window.appNavigate === 'function') {
-          await window.appNavigate({ view: 'mypage' }, { replace: true });
-        } else if (typeof window.openMyPage === 'function') {
-          window.openMyPage();
-        }
+        const mypageUrl = `${window.location.pathname}?view=mypage`;
+        window.location.href = mypageUrl;
       } catch (error) {
         console.error('[edit] submit error:', error);
         setCommonError(error.message || '회원정보 수정 중 오류가 발생했습니다.');

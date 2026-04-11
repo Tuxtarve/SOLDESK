@@ -17,138 +17,13 @@ resource "null_resource" "cleanup_k8s_resources" {
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]
     when        = destroy
-    command     = <<-EOT
-      echo "=== Cleaning up Kubernetes-managed AWS resources before EKS destroy ==="
-
-      # kubeconfig 업데이트 (클러스터가 아직 살아 있는 경우)
-      if aws eks describe-cluster --name ${self.triggers.cluster_name} --region ${self.triggers.region} >/dev/null 2>&1; then
-        aws eks update-kubeconfig --name ${self.triggers.cluster_name} --region ${self.triggers.region} 2>/dev/null || true
-
-        # Ingress 리소스 삭제 → ALB Controller가 ALB/TG 정리
-        kubectl delete ingress --all --all-namespaces --timeout=120s 2>/dev/null || true
-
-        # LoadBalancer 타입 Service 삭제 → NLB/CLB 정리
-        kubectl delete svc --field-selector spec.type=LoadBalancer --all-namespaces --timeout=120s 2>/dev/null || true
-
-        echo "Waiting 60s for AWS resources to be cleaned up by controllers..."
-        sleep 60
-      fi
-
-      # 클러스터 접근 불가 시 직접 정리: VPC 내 남은 ELB 삭제
-      VPC_ID="${self.triggers.vpc_id}"
-
-      if [ -n "$VPC_ID" ]; then
-        echo "Cleaning up leftover ELBs in VPC $VPC_ID..."
-
-        # ALB/NLB 정리
-        for LB_ARN in $(aws elbv2 describe-load-balancers --region ${self.triggers.region} \
-          --query "LoadBalancers[?VpcId=='$VPC_ID'].LoadBalancerArn" --output text 2>/dev/null); do
-          echo "Deleting load balancer: $LB_ARN"
-          aws elbv2 delete-load-balancer --load-balancer-arn "$LB_ARN" --region ${self.triggers.region} 2>/dev/null || true
-        done
-
-        # Classic ELB 정리
-        for CLB_NAME in $(aws elb describe-load-balancers --region ${self.triggers.region} \
-          --query "LoadBalancerDescriptions[?VPCId=='$VPC_ID'].LoadBalancerName" --output text 2>/dev/null); do
-          echo "Deleting classic LB: $CLB_NAME"
-          aws elb delete-load-balancer --load-balancer-name "$CLB_NAME" --region ${self.triggers.region} 2>/dev/null || true
-        done
-
-        # Target Group 정리
-        for TG_ARN in $(aws elbv2 describe-target-groups --region ${self.triggers.region} \
-          --query "TargetGroups[?VpcId=='$VPC_ID'].TargetGroupArn" --output text 2>/dev/null); do
-          echo "Deleting target group: $TG_ARN"
-          aws elbv2 delete-target-group --target-group-arn "$TG_ARN" --region ${self.triggers.region} 2>/dev/null || true
-        done
-
-        echo "Waiting 30s for ENIs to detach..."
-        sleep 30
-
-        # EIP 해제 (IGW detach 차단 원인 — "mapped public address(es)")
-        echo "Releasing Elastic IPs in VPC $VPC_ID..."
-        for ALLOC_ID in $(aws ec2 describe-addresses --region ${self.triggers.region} \
-          --filters "Name=domain,Values=vpc" \
-          --query "Addresses[?NetworkInterfaceId!=null].{A:AllocationId,N:NetworkInterfaceId}" \
-          --output text 2>/dev/null | while read AID NID; do
-            # 이 EIP가 VPC 내 ENI에 연결되었는지 확인
-            ENI_VPC=$(aws ec2 describe-network-interfaces --region ${self.triggers.region} \
-              --network-interface-ids "$NID" \
-              --query 'NetworkInterfaces[0].VpcId' --output text 2>/dev/null)
-            if [ "$ENI_VPC" = "$VPC_ID" ]; then echo "$AID"; fi
-          done); do
-          echo "Disassociating and releasing EIP: $ALLOC_ID"
-          ASSOC_ID=$(aws ec2 describe-addresses --region ${self.triggers.region} \
-            --allocation-ids "$ALLOC_ID" \
-            --query 'Addresses[0].AssociationId' --output text 2>/dev/null)
-          if [ "$ASSOC_ID" != "None" ] && [ -n "$ASSOC_ID" ]; then
-            aws ec2 disassociate-address --association-id "$ASSOC_ID" --region ${self.triggers.region} 2>/dev/null || true
-          fi
-          aws ec2 release-address --allocation-id "$ALLOC_ID" --region ${self.triggers.region} 2>/dev/null || true
-        done
-
-        # 연결되지 않은(미사용) EIP도 정리
-        for ALLOC_ID in $(aws ec2 describe-addresses --region ${self.triggers.region} \
-          --filters "Name=domain,Values=vpc" \
-          --query "Addresses[?AssociationId==null].AllocationId" --output text 2>/dev/null); do
-          echo "Releasing unused EIP: $ALLOC_ID"
-          aws ec2 release-address --allocation-id "$ALLOC_ID" --region ${self.triggers.region} 2>/dev/null || true
-        done
-
-        # ELB/k8s 잔여 ENI 만 (network 모듈과 동일 필터) — RDS/기타 available ENI 건드리지 않음
-        echo "Cleaning up leftover ENIs (aws-K8S / ELB) in VPC $VPC_ID..."
-        for ENI_ID in $(aws ec2 describe-network-interfaces --region ${self.triggers.region} \
-          --filters "Name=vpc-id,Values=$VPC_ID" \
-          --query "NetworkInterfaces[?starts_with(Description, 'aws-K8S-') || contains(Description, 'ELB')].NetworkInterfaceId" \
-          --output text 2>/dev/null); do
-          [ -n "$ENI_ID" ] || continue
-          ATTACH_ID=$(aws ec2 describe-network-interfaces --region ${self.triggers.region} \
-            --network-interface-ids "$ENI_ID" \
-            --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text 2>/dev/null || true)
-          if [ "$ATTACH_ID" != "None" ] && [ -n "$ATTACH_ID" ]; then
-            echo "Detaching ENI: $ENI_ID"
-            aws ec2 detach-network-interface --attachment-id "$ATTACH_ID" --force --region ${self.triggers.region} 2>/dev/null || true
-          fi
-        done
-        sleep 15
-        for ENI_ID in $(aws ec2 describe-network-interfaces --region ${self.triggers.region} \
-          --filters "Name=vpc-id,Values=$VPC_ID" "Name=status,Values=available" \
-          --query "NetworkInterfaces[?starts_with(Description, 'aws-K8S-') || contains(Description, 'ELB')].NetworkInterfaceId" \
-          --output text 2>/dev/null); do
-          [ -n "$ENI_ID" ] || continue
-          echo "Deleting ENI: $ENI_ID"
-          aws ec2 delete-network-interface --network-interface-id "$ENI_ID" --region ${self.triggers.region} 2>/dev/null || true
-        done
-
-        # k8s/ALB/EKS 가 만든 SG 만 정리. network 모듈 Terraform SG(prod-* 등)는 절대 삭제하지 않음
-        # (이전: default 제외 전부 삭제 → TF managed SG 가 먼저 지워져 destroy 시 read SG 오류·2회 destroy 유발)
-        echo "Cleaning up k8s-generated security groups in VPC $VPC_ID (skip Terraform SGs)..."
-        TF_SG_NAMES="prod-monitoring-sg prod-eks-sg prod-rds-sg Cache_SG default"
-        for SG_ID in $(aws ec2 describe-security-groups --region ${self.triggers.region} \
-          --filters "Name=vpc-id,Values=$VPC_ID" \
-          --query "SecurityGroups[].GroupId" --output text 2>/dev/null); do
-          [ -n "$SG_ID" ] || continue
-          SG_NAME=$(aws ec2 describe-security-groups --region ${self.triggers.region} --group-ids "$SG_ID" \
-            --query "SecurityGroups[0].GroupName" --output text 2>/dev/null || true)
-          case " $TF_SG_NAMES " in
-            *" $SG_NAME "*) continue ;;
-          esac
-          # 클러스터/노드가 아직 있음 — eks-cluster-sg-* 는 여기서 지우면 안 됨(ALB 등 k8s-* 만)
-          if [[ "$SG_NAME" =~ ^k8s- ]]; then
-            echo "Revoking rules for k8s SG: $SG_ID ($SG_NAME)"
-            aws ec2 revoke-security-group-ingress --group-id "$SG_ID" --region ${self.triggers.region} \
-              --ip-permissions "$(aws ec2 describe-security-groups --group-ids "$SG_ID" --region ${self.triggers.region} \
-              --query 'SecurityGroups[0].IpPermissions' --output json 2>/dev/null)" 2>/dev/null || true
-            aws ec2 revoke-security-group-egress --group-id "$SG_ID" --region ${self.triggers.region} \
-              --ip-permissions "$(aws ec2 describe-security-groups --group-ids "$SG_ID" --region ${self.triggers.region} \
-              --query 'SecurityGroups[0].IpPermissionsEgress' --output json 2>/dev/null)" 2>/dev/null || true
-            echo "Deleting k8s SG: $SG_ID ($SG_NAME)"
-            aws ec2 delete-security-group --group-id "$SG_ID" --region ${self.triggers.region} 2>/dev/null || true
-          fi
-        done
-      fi
-
-      echo "=== Cleanup complete ==="
-    EOT
+    environment = {
+      EKS_CLUSTER_NAME = self.triggers.cluster_name
+      EKS_REGION       = self.triggers.region
+      EKS_VPC_ID       = self.triggers.vpc_id
+    }
+    # HGFS/Windows 등에서 .tf 가 CRLF 일 때 heredoc 이 깨지므로 스크립트 파일 + 실행 시 CR 제거
+    command = "tr -d '\\r' < \"${path.module}/scripts/cleanup_k8s_resources_on_destroy.sh\" | bash"
   }
 }
 
@@ -166,41 +41,11 @@ resource "null_resource" "cleanup_vpc_leftovers_post" {
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]
     when        = destroy
-    command     = <<-EOT
-      set -euo pipefail
-      REGION="${self.triggers.region}"
-      VPC_ID="${self.triggers.vpc_id}"
-
-      echo "=== Post-EKS cleanup: deleting leftover aws-k8s ENIs in VPC $VPC_ID ==="
-
-      if [ -z "$VPC_ID" ]; then
-        echo "VPC_ID empty; skipping."
-        exit 0
-      fi
-
-      # 노드그룹 종료 직후 ENI가 늦게 available로 바뀌는 경우를 고려해 짧게 재시도
-      for i in 1 2 3 4 5; do
-        ENIS=$(aws ec2 describe-network-interfaces --region "$REGION" \
-          --filters "Name=vpc-id,Values=$VPC_ID" "Name=status,Values=available" \
-          --query "NetworkInterfaces[?starts_with(Description, 'aws-K8S-')].NetworkInterfaceId" \
-          --output text 2>/dev/null || true)
-
-        if [ -z "$ENIS" ]; then
-          echo "No aws-k8s ENIs found (attempt $i/5)."
-          sleep 10
-          continue
-        fi
-
-        for ENI_ID in $ENIS; do
-          echo "Deleting ENI: $ENI_ID"
-          aws ec2 delete-network-interface --network-interface-id "$ENI_ID" --region "$REGION" 2>/dev/null || true
-        done
-
-        sleep 10
-      done
-
-      echo "=== Post-EKS cleanup complete ==="
-    EOT
+    environment = {
+      EKS_POST_REGION = self.triggers.region
+      EKS_POST_VPC_ID = self.triggers.vpc_id
+    }
+    command = "tr -d '\\r' < \"${path.module}/scripts/cleanup_vpc_enis_post_eks_destroy.sh\" | bash"
   }
 }
 

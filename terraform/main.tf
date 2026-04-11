@@ -20,6 +20,10 @@ terraform {
       source  = "hashicorp/null"
       version = "~> 3.0"
     }
+    external = {
+      source  = "hashicorp/external"
+      version = "~> 2.3"
+    }
   }
   required_version = ">= 1.5.0"
 }
@@ -31,6 +35,12 @@ provider "aws" {
 locals {
   db_schema_create_sql_path = abspath("${path.root}/../db-schema/create.sql")
   db_schema_insert_sql_path = abspath("${path.root}/../db-schema/Insert.sql")
+}
+
+# local-exec 가 쓰는 aws/kubectl/helm 이 없으면 이 스크립트가 Linux·macOS 에서 자동 설치를 시도한다(네트워크·sudo/root 필요할 수 있음).
+data "external" "terraform_host_exec_clis" {
+  # 공유 폴더/Windows 편집기 CRLF 로 bash 가 깨지지 않게 다른 local-exec 과 동일하게 CR 제거.
+  program = ["bash", "-c", "tr -d '\\r' < \"${path.module}/scripts/verify_terraform_host_cli.sh\" | bash"]
 }
 
 module "network" {
@@ -76,6 +86,7 @@ resource "null_resource" "db_schema_init" {
   # RDS는 private subnet + SG가 EKS만 허용이므로,
   # 스키마/시드는 EKS 내부에서(mysql:8 임시 Pod) 실행한다.
   depends_on = [
+    data.external.terraform_host_exec_clis,
     module.rds,
     module.eks,
     aws_security_group_rule.rds_from_eks_cluster_sg,
@@ -84,13 +95,15 @@ resource "null_resource" "db_schema_init" {
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]
     environment = {
-      DB_HOST       = module.rds.writer_endpoint
-      DB_USER       = var.db_init_user
-      DB_PASSWORD   = var.db_password
-      DB_NAME       = var.db_schema_name
-      CREATE_SQL    = local.db_schema_create_sql_path
-      INSERT_SQL    = local.db_schema_insert_sql_path
-      K8S_NAMESPACE = var.ticketing_namespace
+      DB_HOST          = module.rds.writer_endpoint
+      DB_USER          = var.db_init_user
+      DB_PASSWORD      = var.db_password
+      DB_NAME          = var.db_schema_name
+      CREATE_SQL       = local.db_schema_create_sql_path
+      INSERT_SQL       = local.db_schema_insert_sql_path
+      K8S_NAMESPACE    = var.ticketing_namespace
+      EKS_CLUSTER_NAME = module.eks.cluster_name
+      AWS_REGION       = var.aws_region
     }
     command = "tr -d '\\r' < \"${path.root}/scripts/init_db_schema_via_k8s.sh\" | bash"
   }

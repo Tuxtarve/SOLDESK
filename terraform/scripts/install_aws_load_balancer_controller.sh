@@ -11,6 +11,16 @@ echo "Installing aws-load-balancer-controller via Helm..."
 : "${VPC_ID:?VPC_ID is required}"
 : "${ROLE_ARN:?ROLE_ARN is required}"
 
+if ! command -v aws >/dev/null 2>&1; then
+  echo "ERROR: aws CLI not found. Install AWS CLI v2 and ensure it is on PATH." >&2
+  exit 127
+fi
+if ! command -v helm >/dev/null 2>&1; then
+  echo "ERROR: helm not found. Terraform apply runs this script on the machine where you execute terraform;" >&2
+  echo "      install Helm 3 (https://helm.sh/docs/intro/install/) and retry." >&2
+  exit 127
+fi
+
 aws eks update-kubeconfig --name "${CLUSTER_NAME}" --region "${AWS_REGION}"
 
 helm repo add eks https://aws.github.io/eks-charts >/dev/null 2>&1 || true

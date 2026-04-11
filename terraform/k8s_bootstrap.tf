@@ -7,6 +7,7 @@ resource "null_resource" "k8s_bootstrap_after_apply" {
   # module.eks 는 triggers / environment 에서 이미 암시적 의존.
   # s3 모듈은 스크립트가 terraform output 으로만 버킷을 읽어 암시적 의존이 없으므로 명시 유지.
   depends_on = [
+    data.external.terraform_host_exec_clis,
     null_resource.install_aws_load_balancer_controller,
     module.s3_hosting_v2,
     null_resource.db_schema_init,

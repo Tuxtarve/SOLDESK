@@ -162,11 +162,7 @@
 
         alert('비밀번호가 변경되었습니다.');
 
-        if (typeof window.appNavigate === 'function') {
-          await window.appNavigate({ view: 'mypage' }, { replace: true });
-        } else if (typeof window.openMyPage === 'function') {
-          window.openMyPage();
-        }
+        window.location.href = `${window.location.pathname}?view=mypage`;
       } catch (error) {
         console.error('[changepw] submit error:', error);
         setCommonError(error.message || '비밀번호 변경 중 오류가 발생했습니다.');

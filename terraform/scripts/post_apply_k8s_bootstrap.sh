@@ -10,6 +10,11 @@ set -euo pipefail
 : "${AWS_REGION:?}"
 : "${DB_PASSWORD:?}"
 
+if ! command -v kubectl >/dev/null 2>&1; then
+  echo "ERROR: kubectl not found. Install kubectl before terraform apply (same host that runs local-exec)." >&2
+  exit 127
+fi
+
 NS="${TICKETING_NAMESPACE:-ticketing}"
 CM="${TICKETING_CONFIGMAP_NAME:-ticketing-config}"
 WORKER="${WORKER_DEPLOYMENT_NAME:-worker-svc}"
@@ -22,17 +27,18 @@ ECR_REPO_WORKER_SVC="${ECR_REPO_WORKER_SVC:-ticketing/worker-svc}"
 DB_SCHEMA_NAME="${DB_SCHEMA_NAME:-ticketing}"
 
 normalize_crlf() {
-  # 공유 폴더/윈도우 편집기 등으로 CRLF가 섞여도 항상 동일하게 동작하도록, 실행 전에 LF로 정규화.
-  # (idempotent) CRLF가 없으면 변경 없음.
   local f
   for f in "$REPO_ROOT"/k8s/scripts/*.sh "$REPO_ROOT"/terraform/scripts/*.sh "$REPO_ROOT"/scripts/*.sh; do
     [ -f "$f" ] || continue
     sed -i 's/\r$//' "$f" 2>/dev/null || true
   done
+  while IFS= read -r -d '' f; do
+    sed -i 's/\r$//' "$f" 2>/dev/null || true
+  done < <(find "$REPO_ROOT/terraform/modules" -type f -name '*.sh' -print0 2>/dev/null || true)
 }
 
 if [[ -f "$REPO_ROOT/scripts/normalize-line-endings.sh" ]]; then
-  bash "$REPO_ROOT/scripts/normalize-line-endings.sh" >/dev/null
+  bash "$REPO_ROOT/scripts/normalize-line-endings.sh" >/dev/null 2>&1 || true
 else
   normalize_crlf
 fi

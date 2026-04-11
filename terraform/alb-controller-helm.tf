@@ -6,7 +6,10 @@ resource "null_resource" "install_aws_load_balancer_controller" {
     role_arn     = module.eks.alb_controller_role_arn
   }
 
-  depends_on = [module.eks]
+  depends_on = [
+    data.external.terraform_host_exec_clis,
+    module.eks,
+  ]
 
   provisioner "local-exec" {
     # -l 은 ~/.bashrc 등을 실행해 빈 명령/깨진 alias 줄이 있으면 "bash: : 명령을 찾을 수 없습니다"만 반복될 수 있음.
