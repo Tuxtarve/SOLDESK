@@ -171,12 +171,15 @@ fi
 
 CLOUDFRONT_DOMAIN="$(terraform output -raw cloudfront_domain)"
 
-# ── 9. CloudFront에 ALB API 라우팅 설정 ──
+# ── 9. API Gateway VPC Link Integration 설정 ──
+# Internal ALB가 ingress로 만들어진 후, listener ARN을 추출하여
+# tfvars에 박고 terraform apply 재실행 → API GW Integration/Route 생성
+# 흐름: 브라우저 → CloudFront → API GW → VPC Link → Internal ALB → EKS
 echo ""
 echo "=========================================="
-echo " [9/9] CloudFront API 라우팅 설정"
+echo " [9/9] API Gateway VPC Link Integration 연결"
 echo "=========================================="
-echo "ALB 주소 대기 중..."
+echo "Internal ALB 주소 대기 중 (ingress가 ALB 만들 때까지)..."
 for i in $(seq 1 30); do
   ALB_ADDRESS="$(kubectl get ingress -n ticketing -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)"
   if [[ -n "$ALB_ADDRESS" ]]; then break; fi
@@ -185,23 +188,44 @@ for i in $(seq 1 30); do
 done
 
 if [[ -z "$ALB_ADDRESS" ]]; then
-  echo "WARNING: ALB 주소를 가져올 수 없습니다. CloudFront API 라우팅을 수동으로 설정하세요."
+  echo "WARNING: Internal ALB 주소를 가져올 수 없습니다. API GW Integration이 생성되지 않습니다."
 else
-  echo "ALB: $ALB_ADDRESS"
+  echo "Internal ALB: $ALB_ADDRESS"
 
-  # terraform.tfvars에 ALB DNS 저장 → 이후 terraform apply 시 자동 반영
-  TFVARS="$TF_DIR/terraform.tfvars"
-  if [[ -f "$TFVARS" ]] && grep -q '^alb_dns_name' "$TFVARS"; then
-    sed -i "s|^alb_dns_name.*|alb_dns_name = \"$ALB_ADDRESS\"|" "$TFVARS"
+  # ALB의 HTTP listener ARN 추출 (API GW VPC Link Integration의 target)
+  echo "ALB listener ARN 조회 중..."
+  ALB_ARN="$(aws elbv2 describe-load-balancers --region "$REGION" \
+    --query "LoadBalancers[?DNSName=='${ALB_ADDRESS}'].LoadBalancerArn | [0]" \
+    --output text 2>/dev/null || true)"
+
+  if [[ -z "$ALB_ARN" || "$ALB_ARN" == "None" ]]; then
+    echo "WARNING: ALB ARN을 찾을 수 없습니다. ALB가 아직 등록 중일 수 있습니다."
   else
-    echo "alb_dns_name = \"$ALB_ADDRESS\"" >> "$TFVARS"
-  fi
-  echo "terraform.tfvars에 alb_dns_name 저장 완료"
+    LISTENER_ARN="$(aws elbv2 describe-listeners --region "$REGION" \
+      --load-balancer-arn "$ALB_ARN" \
+      --query "Listeners[?Port==\`80\`].ListenerArn | [0]" \
+      --output text 2>/dev/null || true)"
 
-  # Terraform으로 CloudFront 업데이트 (상태 일관성 유지)
-  echo "Terraform apply로 CloudFront ALB 라우팅 설정 중..."
-  terraform -chdir="$TF_DIR" apply -auto-approve
-  echo "CloudFront ALB 라우팅 설정 완료 (전파 3~5분 소요)"
+    if [[ -z "$LISTENER_ARN" || "$LISTENER_ARN" == "None" ]]; then
+      echo "WARNING: ALB listener ARN을 찾을 수 없습니다."
+    else
+      echo "Listener ARN: $LISTENER_ARN"
+
+      # terraform.tfvars에 alb_listener_arn 저장 → 다음 apply에서 API GW Integration/Route 생성
+      TFVARS="$TF_DIR/terraform.tfvars"
+      if [[ -f "$TFVARS" ]] && grep -q '^alb_listener_arn' "$TFVARS"; then
+        sed -i "s|^alb_listener_arn.*|alb_listener_arn = \"$LISTENER_ARN\"|" "$TFVARS"
+      else
+        echo "alb_listener_arn = \"$LISTENER_ARN\"" >> "$TFVARS"
+      fi
+      echo "terraform.tfvars에 alb_listener_arn 저장 완료"
+
+      # Terraform 재실행 → API GW Integration + Route 생성, CloudFront 캐시 동작 갱신
+      echo "Terraform apply 재실행 중 (API GW Integration 생성)..."
+      terraform -chdir="$TF_DIR" apply -auto-approve
+      echo "API GW Integration 생성 완료. CloudFront 전파 3~5분 소요"
+    fi
+  fi
 
   # ── 10. 모니터링 Prometheus에 EKS 서비스 scrape 등록 ──
   echo ""
@@ -293,7 +317,10 @@ echo ""
 echo "=========================================="
 echo " 전체 셋업 완료!"
 echo "=========================================="
-echo "  프론트엔드: https://${CLOUDFRONT_DOMAIN}"
-echo "  백엔드 API: http://${ALB_ADDRESS}/api/events"
+API_GW_ENDPOINT="$(terraform output -raw api_gateway_endpoint 2>/dev/null || echo '(아직 미생성)')"
+echo "  프론트엔드:    https://${CLOUDFRONT_DOMAIN}"
+echo "  API (사용자):  https://${CLOUDFRONT_DOMAIN}/api/events"
+echo "  API GW (직접): ${API_GW_ENDPOINT}/api/events"
+echo "  Internal ALB:  ${ALB_ADDRESS} (VPC 내부에서만 접근 가능)"
 echo "  kubectl get nodes"
 echo "  kubectl get pods -n ticketing"

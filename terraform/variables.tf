@@ -40,8 +40,8 @@ variable "eks_cluster_name" {
   default     = "ticketing-eks"
 }
 
-variable "alb_dns_name" {
-  description = "ALB Ingress Controller가 생성한 ALB의 DNS 이름. EKS 배포 후 'kubectl get ingress -n ticketing'으로 확인"
+variable "alb_listener_arn" {
+  description = "Internal ALB의 HTTP listener ARN. ALB Ingress Controller가 생성한 후 setup-all.sh가 자동으로 tfvars에 박는다. API Gateway VPC Link Integration의 target."
   type        = string
   default     = ""
 }

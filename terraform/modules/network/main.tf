@@ -35,16 +35,20 @@ resource "aws_subnet" "public" {
   }
 }
 
-# DB·캐시용 프라이빗 서브넷 (설계도 Private_VPC DB 티어 명명)
+# DB·캐시·Internal ALB용 프라이빗 서브넷
+# kubernetes.io/role/internal-elb=1 태그가 있어야 ALB Ingress Controller가
+# scheme=internal ingress를 위한 ALB를 이 서브넷에 배치한다
 resource "aws_subnet" "private" {
   count             = 2
   vpc_id            = aws_vpc.main.id
   cidr_block        = "10.0.${count.index + 10}.0/24"
   availability_zone = data.aws_availability_zones.available.names[count.index]
   tags = {
-    Name        = "Private_VPC_DB_Pri_RT_SN${count.index + 1}"
-    Environment = var.env
-    Layer       = "db"
+    Name                              = "Private_VPC_DB_Pri_RT_SN${count.index + 1}"
+    Environment                       = var.env
+    Layer                             = "db"
+    "kubernetes.io/role/internal-elb" = "1"
+    "kubernetes.io/cluster/${var.eks_cluster_name}" = "shared"
   }
 }
 

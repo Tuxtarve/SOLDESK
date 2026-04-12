@@ -53,17 +53,35 @@ module "waf" {
 }
 
 module "cloudfront" {
-  source               = "./modules/cloudfront"
-  env                  = var.env
-  frontend_bucket_id   = module.s3.frontend_bucket_id
-  frontend_bucket_arn  = module.s3.frontend_bucket_arn
-  frontend_domain      = module.s3.frontend_bucket_regional_domain
-  waf_acl_arn          = module.waf.waf_acl_arn
-  alb_dns_name         = var.alb_dns_name
+  source                    = "./modules/cloudfront"
+  env                       = var.env
+  frontend_bucket_id        = module.s3.frontend_bucket_id
+  frontend_bucket_arn       = module.s3.frontend_bucket_arn
+  frontend_domain           = module.s3.frontend_bucket_regional_domain
+  waf_acl_arn               = module.waf.waf_acl_arn
+  api_gateway_endpoint_host = module.api_gateway.api_endpoint_host
 
   # destroy 시 CloudFront가 WAF보다 먼저 삭제되도록 보장
   # (WAF가 먼저 삭제되면 CloudFront destroy가 실패)
-  depends_on = [module.waf]
+  depends_on = [module.waf, module.api_gateway]
+}
+
+# ── API Gateway (HTTP API + Cognito JWT Authorizer + VPC Link) ────
+# CloudFront의 origin으로 사용. Internal ALB와는 VPC Link로 연결
+# 첫 apply 시 alb_listener_arn=""이면 API GW 본체만 만들고
+# Integration/Route는 두 번째 apply (setup-all.sh가 listener ARN 박은 후)에서 생성
+module "api_gateway" {
+  source = "./modules/api_gateway"
+  env    = var.env
+  aws_region = var.aws_region
+
+  vpc_id                      = module.network.vpc_id
+  private_subnet_ids          = module.network.private_subnet_ids
+  cognito_user_pool_id        = module.cognito.user_pool_id
+  cognito_user_pool_client_id = module.cognito.user_pool_client_id
+  alb_listener_arn            = var.alb_listener_arn
+
+  depends_on = [module.network, module.cognito]
 }
 
 module "sqs" {

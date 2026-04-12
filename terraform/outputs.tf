@@ -102,3 +102,13 @@ output "alertmanager_url" {
 output "github_actions_role_arn" {
   value = module.cicd.github_actions_role_arn
 }
+
+output "api_gateway_endpoint" {
+  description = "API Gateway HTTP API invoke URL — CloudFront origin으로 사용됨"
+  value       = module.api_gateway.api_endpoint
+}
+
+output "api_gateway_endpoint_host" {
+  description = "API Gateway 도메인만 (https:// 제외)"
+  value       = module.api_gateway.api_endpoint_host
+}

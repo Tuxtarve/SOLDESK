@@ -5,7 +5,8 @@ metadata:
   name: ticketing-ingress
   namespace: ticketing
   annotations:
-    alb.ingress.kubernetes.io/scheme: internet-facing
+    # internal ALB — VPC 내부에서만 접근 가능. API Gateway VPC Link만이 호출 가능
+    alb.ingress.kubernetes.io/scheme: internal
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
     alb.ingress.kubernetes.io/healthcheck-path: /health

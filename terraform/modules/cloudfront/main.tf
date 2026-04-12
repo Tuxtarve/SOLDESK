@@ -67,16 +67,18 @@ with open(sys.argv[1], 'w') as f:
     origin_access_control_id = aws_cloudfront_origin_access_control.frontend.id
   }
 
-  # Origin 2: ALB (API) — alb_dns_name이 비어있으면 생략 (EKS 배포 전)
+  # Origin 2: API Gateway (HTTP API) — endpoint가 비어있으면 생략
+  # API GW는 항상 HTTPS만 받음 (자체 *.execute-api 인증서)
+  # CloudFront → API GW → VPC Link → Internal ALB → EKS 흐름
   dynamic "origin" {
-    for_each = var.alb_dns_name != "" ? [var.alb_dns_name] : []
+    for_each = var.api_gateway_endpoint_host != "" ? [var.api_gateway_endpoint_host] : []
     content {
       domain_name = origin.value
-      origin_id   = "ALB-api"
+      origin_id   = "APIGW-api"
       custom_origin_config {
         http_port              = 80
         https_port             = 443
-        origin_protocol_policy = "http-only"
+        origin_protocol_policy = "https-only"
         origin_ssl_protocols   = ["TLSv1.2"]
       }
     }
@@ -100,12 +102,14 @@ with open(sys.argv[1], 'w') as f:
     max_ttl     = 31536000
   }
 
-  # API 경로 캐시 (캐싱 없음) — ALB origin이 있을 때만 생성
+  # API 경로 캐시 (캐싱 없음) — API GW origin이 있을 때만 생성
+  # x-user-email은 클라이언트가 보내도 API GW가 검증된 값으로 덮어씀
+  # Authorization 헤더를 forward 해야 API GW JWT Authorizer가 검증 가능
   dynamic "ordered_cache_behavior" {
-    for_each = var.alb_dns_name != "" ? [1] : []
+    for_each = var.api_gateway_endpoint_host != "" ? [1] : []
     content {
       path_pattern           = "/api/*"
-      target_origin_id       = "ALB-api"
+      target_origin_id       = "APIGW-api"
       viewer_protocol_policy = "redirect-to-https"
       allowed_methods        = ["DELETE", "GET", "HEAD", "OPTIONS", "PATCH", "POST", "PUT"]
       cached_methods         = ["GET", "HEAD"]
@@ -113,7 +117,8 @@ with open(sys.argv[1], 'w') as f:
 
       forwarded_values {
         query_string = true
-        headers      = ["Authorization", "Content-Type", "Host", "CloudFront-Forwarded-Proto", "x-user-email"]
+        # Host는 API GW가 자체 도메인을 기대하므로 forward 하면 안 됨
+        headers      = ["Authorization", "Content-Type", "CloudFront-Forwarded-Proto"]
         cookies { forward = "all" }
       }
 
