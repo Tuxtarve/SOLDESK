@@ -43,7 +43,7 @@ resource "aws_instance" "monitoring" {
   iam_instance_profile   = aws_iam_instance_profile.monitoring.name
   key_name               = var.key_name != "" ? var.key_name : null
 
-  user_data = base64encode(templatefile("${path.module}/userdata.sh", {
+  user_data_base64 = base64gzip(templatefile("${path.module}/userdata.sh", {
     redis_host        = var.redis_host
     slack_webhook_url = var.slack_webhook_url
   }))
