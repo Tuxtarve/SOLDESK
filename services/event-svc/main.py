@@ -46,7 +46,7 @@ async def lifespan(app: FastAPI):
         password=os.getenv("DB_PASSWORD", ""),
         db=os.getenv("DB_NAME", "ticketing"),
         port=int(os.getenv("DB_PORT", "3306")),
-        maxsize=5,
+        maxsize=3,
         autocommit=True,
     )
     redis_client = aioredis.Redis(

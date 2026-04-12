@@ -1,0 +1,55 @@
+# KEDA ScaledObject — worker-svc를 SQS 큐 길이 기반으로 자동 스케일링
+# 템플릿: ${SQS_QUEUE_URL}, ${AWS_REGION}은 setup-all.sh에서 envsubst로 치환됨
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker-svc-sqs-scaler
+  namespace: ticketing
+  labels:
+    app: worker-svc
+    scaler: keda-sqs
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: worker-svc
+
+  # 큐 비어도 최소 1개는 유지 (SQS 폴링 즉시성 확보)
+  # scale-to-zero 원하면 0으로 변경
+  minReplicaCount: 1
+  maxReplicaCount: 20
+
+  # 큐 길이를 15초마다 폴링, 60초 idle 후 scale-down
+  pollingInterval: 15
+  cooldownPeriod: 60
+
+  # KEDA가 생성한 HPA 동작 미세 조정
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 120
+          policies:
+            - type: Percent
+              value: 50
+              periodSeconds: 60
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          policies:
+            - type: Percent
+              value: 100
+              periodSeconds: 30
+            - type: Pods
+              value: 4
+              periodSeconds: 30
+          selectPolicy: Max
+
+  triggers:
+    - type: aws-sqs-queue
+      metadata:
+        queueURL: ${SQS_QUEUE_URL}
+        # pod당 처리 목표 메시지 수 — 큐에 90개면 pod 3개로 확장
+        queueLength: "30"
+        awsRegion: ${AWS_REGION}
+        # KEDA operator의 IRSA(IAM role) 사용
+        identityOwner: operator

@@ -14,6 +14,22 @@ cd "$ROOT/terraform"
 MAX_RETRIES=4
 REGION=$(terraform output -raw aws_region 2>/dev/null || echo "ap-northeast-2")
 
+# ── 모니터링 영구 EBS 보호 ───────────────────────────────────────
+# aws_ebs_volume.monitoring_data에 prevent_destroy=true가 걸려있어
+# 그냥 destroy하면 plan 단계에서 fail한다.
+# state에서 EBS와 attachment를 제거하면 terraform이 모르는 외부 리소스가 되어
+# destroy 대상에서 빠지고, AWS에는 그대로 남아 다음 apply에서 재사용된다.
+echo "============================================="
+echo " 모니터링 영구 EBS 보호 (state 분리)"
+echo "============================================="
+terraform state rm 'module.monitoring.aws_volume_attachment.monitoring_data' 2>/dev/null \
+  && echo "  attachment: state 분리 완료" \
+  || echo "  attachment: state에 없음 (이미 분리됨)"
+terraform state rm 'module.monitoring.aws_ebs_volume.monitoring_data' 2>/dev/null \
+  && echo "  ebs volume: state 분리 완료" \
+  || echo "  ebs volume: state에 없음 (이미 분리됨)"
+echo ""
+
 # ── VPC ID 확인 ──────────────────────────────────────────────────
 get_vpc_id() {
   local vpc_id

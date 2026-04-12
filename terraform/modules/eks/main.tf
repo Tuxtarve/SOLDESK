@@ -333,6 +333,44 @@ resource "aws_iam_role_policy_attachment" "cluster_autoscaler" {
   policy_arn = aws_iam_policy.cluster_autoscaler.arn
 }
 
+# KEDA operator용 IRSA (SQS 큐 길이 기반 스케일링)
+# KEDA Helm 차트의 기본 service account 이름: keda-operator (네임스페이스: keda)
+resource "aws_iam_role" "keda_operator" {
+  name = "ticketing-keda-operator-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = aws_iam_openid_connect_provider.eks.arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "${local.oidc_issuer}:sub" = "system:serviceaccount:keda:keda-operator"
+          "${local.oidc_issuer}:aud" = "sts.amazonaws.com"
+        }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "keda_operator_sqs" {
+  name = "ticketing-keda-operator-sqs-policy"
+  role = aws_iam_role.keda_operator.name
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "sqs:GetQueueAttributes",
+        "sqs:GetQueueUrl",
+      ]
+      Resource = var.sqs_queue_arns
+    }]
+  })
+}
+
 # SQS 접근용 IRSA (reserv-svc, worker-svc 공용)
 resource "aws_iam_role" "sqs_access" {
   name = "ticketing-sqs-access-role"

@@ -3,6 +3,41 @@ set -e
 
 yum update -y
 yum install -y docker
+
+# ── 영구 EBS 볼륨 마운트 (/var/lib/docker) ───────────────────────
+# Terraform이 attach한 EBS를 docker 시작 전에 /var/lib/docker로 마운트하여
+# Prometheus/Grafana/Loki named volume(/var/lib/docker/volumes/*)을 영구화
+# Nitro 인스턴스(t3.small)에서 /dev/sdf는 OS상 /dev/nvme1n1로 보임
+DEVICE="/dev/nvme1n1"
+MOUNT_POINT="/var/lib/docker"
+
+echo "[ebs-mount] $DEVICE 대기 중..."
+for i in $(seq 1 60); do
+  [ -b "$DEVICE" ] && break
+  sleep 1
+done
+
+if [ ! -b "$DEVICE" ]; then
+  echo "[ebs-mount] WARNING: $DEVICE not found, 모니터링 데이터가 영구화되지 않습니다"
+else
+  # 첫 부팅이면 파일시스템 생성, 재부팅·재생성이면 기존 파일시스템 보존
+  if ! blkid "$DEVICE" >/dev/null 2>&1; then
+    echo "[ebs-mount] 새 볼륨 — xfs 포맷"
+    mkfs -t xfs "$DEVICE"
+  else
+    echo "[ebs-mount] 기존 파일시스템 발견 — 데이터 보존"
+  fi
+
+  mkdir -p "$MOUNT_POINT"
+  mount "$DEVICE" "$MOUNT_POINT"
+
+  UUID=$(blkid -s UUID -o value "$DEVICE")
+  if ! grep -q "$UUID" /etc/fstab; then
+    echo "UUID=$UUID $MOUNT_POINT xfs defaults,nofail 0 2" >> /etc/fstab
+  fi
+  echo "[ebs-mount] 마운트 완료: $DEVICE → $MOUNT_POINT"
+fi
+
 systemctl start docker
 systemctl enable docker
 usermod -aG docker ec2-user

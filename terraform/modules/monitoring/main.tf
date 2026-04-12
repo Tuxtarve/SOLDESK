@@ -61,3 +61,33 @@ resource "aws_eip" "monitoring" {
   domain   = "vpc"
   tags     = { Name = "ticketing-monitoring-eip", Environment = var.env }
 }
+
+# ── 영구 데이터 EBS 볼륨 ─────────────────────────────────────────
+# Prometheus tsdb / Grafana SQLite / Loki chunks 보관용
+# destroy/apply 사이클을 돌려도 데이터를 보존하기 위해 EC2 root와 분리
+# prevent_destroy로 실수 삭제 방지 — 평소 destroy는 scripts/destroy.sh가
+# 자동으로 state에서 분리한 뒤 지우므로 EBS 자체는 AWS에 그대로 남는다
+resource "aws_ebs_volume" "monitoring_data" {
+  availability_zone = aws_instance.monitoring.availability_zone
+  size              = 50
+  type              = "gp3"
+  encrypted         = true
+
+  tags = {
+    Name        = "ticketing-monitoring-data"
+    Environment = var.env
+    Persistent  = "true"
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_volume_attachment" "monitoring_data" {
+  device_name                    = "/dev/sdf"
+  volume_id                      = aws_ebs_volume.monitoring_data.id
+  instance_id                    = aws_instance.monitoring.id
+  force_detach                   = true
+  stop_instance_before_detaching = false
+}

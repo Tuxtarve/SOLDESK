@@ -6,7 +6,9 @@ metadata:
   labels:
     app: worker-svc
 spec:
-  replicas: 1
+  # replicas는 KEDA ScaledObject(worker-svc-sqs-scaler)가 관리한다
+  # kubectl apply 시 KEDA가 생성한 HPA의 desired replicas와 충돌하지 않도록
+  # 여기서는 명시하지 않는다 (kubectl 기본 1로 생성 후 KEDA가 즉시 인수)
   selector:
     matchLabels:
       app: worker-svc

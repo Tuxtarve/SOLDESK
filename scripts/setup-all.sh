@@ -16,6 +16,28 @@ if [[ -z "${DB_PASSWORD:-}" ]]; then
   exit 1
 fi
 
+# ── 0.5. 영구 EBS 볼륨 import (이전 destroy/apply 사이클에서 살아남은 볼륨 재사용) ──
+echo "=========================================="
+echo " [0.5] 모니터링 영구 EBS 볼륨 확인"
+echo "=========================================="
+REGION_FOR_IMPORT="$(terraform output -raw aws_region 2>/dev/null || echo "ap-northeast-2")"
+EBS_ID=$(aws ec2 describe-volumes \
+  --region "$REGION_FOR_IMPORT" \
+  --filters "Name=tag:Name,Values=ticketing-monitoring-data" "Name=tag:Persistent,Values=true" \
+  --query "Volumes[?State=='available' || State=='in-use'] | [0].VolumeId" \
+  --output text 2>/dev/null || echo "None")
+
+if [ -n "$EBS_ID" ] && [ "$EBS_ID" != "None" ]; then
+  if ! terraform state list 2>/dev/null | grep -q 'module.monitoring.aws_ebs_volume.monitoring_data'; then
+    echo "기존 EBS 볼륨 발견: $EBS_ID — terraform state에 import 합니다 (데이터 보존)"
+    terraform import 'module.monitoring.aws_ebs_volume.monitoring_data' "$EBS_ID"
+  else
+    echo "EBS 볼륨이 이미 state에 등록되어 있습니다: $EBS_ID"
+  fi
+else
+  echo "기존 EBS 볼륨 없음 — 새로 생성됩니다 (첫 적용)"
+fi
+
 # ── 1. Terraform Apply ──
 echo "=========================================="
 echo " [1/8] Terraform Apply"
@@ -46,12 +68,38 @@ echo " [4/8] Cluster Autoscaler 설치"
 echo "=========================================="
 bash "$SCRIPTS/install-cluster-autoscaler.sh"
 
+# ── 4.5. KEDA 설치 (SQS 큐 길이 기반 worker-svc 자동 스케일링) ──
+echo ""
+echo "=========================================="
+echo " [4.5/8] KEDA 설치"
+echo "=========================================="
+bash "$SCRIPTS/install-keda.sh"
+
 # ── 5. 앱 배포 ──
 echo ""
 echo "=========================================="
 echo " [5/8] ticketing 앱 배포"
 echo "=========================================="
 bash "$SCRIPTS/apply-ticketing-k8s.sh"
+
+# ── 5.5. KEDA ScaledObject 적용 (worker-svc SQS 스케일링) ──
+echo ""
+echo "=========================================="
+echo " [5.5/8] KEDA ScaledObject 적용"
+echo "=========================================="
+SQS_QUEUE_URL="$(terraform output -raw sqs_queue_url)"
+AWS_REGION="$(terraform output -raw aws_region)"
+export SQS_QUEUE_URL AWS_REGION
+
+# 템플릿 → 실제 매니페스트 (envsubst로 ${SQS_QUEUE_URL}, ${AWS_REGION} 치환)
+envsubst < "$ROOT/k8s/keda/worker-svc-scaledobject.yaml.tmpl" \
+  | kubectl apply -f -
+echo "ScaledObject 적용 완료 (queue=$SQS_QUEUE_URL)"
+
+# KEDA가 HPA를 자동 생성할 때까지 잠깐 대기
+sleep 5
+kubectl get scaledobject -n ticketing
+kubectl get hpa -n ticketing | grep keda || true
 
 # ── 6. DB 스키마 초기화 ──
 echo ""
