@@ -37,14 +37,15 @@ resource "aws_iam_instance_profile" "monitoring" {
 
 resource "aws_instance" "monitoring" {
   ami                    = data.aws_ami.amazon_linux.id
-  instance_type          = "t3.micro"
+  instance_type          = "t3.small"
   subnet_id              = var.subnet_id
   vpc_security_group_ids = [var.security_group_id]
   iam_instance_profile   = aws_iam_instance_profile.monitoring.name
   key_name               = var.key_name != "" ? var.key_name : null
 
   user_data = base64encode(templatefile("${path.module}/userdata.sh", {
-    redis_host = var.redis_host
+    redis_host        = var.redis_host
+    slack_webhook_url = var.slack_webhook_url
   }))
 
   root_block_device {

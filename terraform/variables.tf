@@ -46,6 +46,13 @@ variable "alb_dns_name" {
   default     = ""
 }
 
+variable "slack_webhook_url" {
+  description = "Slack Incoming Webhook URL for Alertmanager"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "cognito_domain_prefix" {
   description = "Cognito 호스티드 UI 도메인 접두사 (전역 유일)"
   type        = string

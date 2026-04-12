@@ -9,3 +9,9 @@ variable "redis_host" {
   type        = string
   description = "ElastiCache Redis endpoint for redis-exporter"
 }
+variable "slack_webhook_url" {
+  type        = string
+  description = "Slack Incoming Webhook URL for Alertmanager"
+  default     = ""
+  sensitive   = true
+}

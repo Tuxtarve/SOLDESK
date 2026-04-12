@@ -184,6 +184,7 @@ module "monitoring" {
   security_group_id = module.network.monitoring_sg_id
   key_name          = var.key_name
   redis_host        = module.elasticache.redis_endpoint
+  slack_webhook_url = var.slack_webhook_url
 
   # destroy 시 EC2가 네트워크(SG/서브넷)보다 먼저 삭제되도록 보장
   depends_on = [module.network, module.elasticache]

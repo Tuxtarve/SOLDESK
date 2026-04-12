@@ -13,7 +13,7 @@ curl -SL "https://github.com/docker/compose/releases/latest/download/docker-comp
 chmod +x /usr/local/bin/docker-compose
 
 # ── 디렉터리 생성 ──
-mkdir -p /opt/monitoring/{prometheus/rules,alertmanager,cloudwatch,grafana/provisioning/datasources,grafana/provisioning/dashboards,grafana/dashboards}
+mkdir -p /opt/monitoring/{prometheus/rules,alertmanager,cloudwatch,grafana/provisioning/datasources,grafana/provisioning/dashboards,grafana/dashboards,loki/rules/fake,promtail}
 cd /opt/monitoring
 
 # ── docker-compose.yml ──
@@ -114,9 +114,40 @@ services:
     networks:
       - monitoring
 
+  loki:
+    image: grafana/loki:2.9.6
+    container_name: loki
+    restart: unless-stopped
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./loki/loki-config.yml:/etc/loki/local-config.yaml:ro
+      - ./loki/rules:/loki/rules:ro
+      - loki_data:/loki
+    command:
+      - '-config.file=/etc/loki/local-config.yaml'
+    networks:
+      - monitoring
+
+  promtail:
+    image: grafana/promtail:2.9.6
+    container_name: promtail
+    restart: unless-stopped
+    volumes:
+      - ./promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    command:
+      - '-config.file=/etc/promtail/config.yml'
+    depends_on:
+      - loki
+    networks:
+      - monitoring
+
 volumes:
   prometheus_data:
   grafana_data:
+  loki_data:
 
 networks:
   monitoring:
@@ -125,6 +156,9 @@ COMPOSE_EOF
 
 # docker-compose.yml 내 REDIS_HOST 치환
 sed -i "s|REDIS_HOST_PLACEHOLDER|${redis_host}|g" docker-compose.yml
+
+# alertmanager.yml 내 SLACK_WEBHOOK 치환
+sed -i "s|SLACK_WEBHOOK_PLACEHOLDER|${slack_webhook_url}|g" alertmanager/alertmanager.yml
 
 # ── Grafana 프로비저닝: 데이터소스 ──
 cat > grafana/provisioning/datasources/prometheus.yml << 'GF_DS_EOF'
@@ -137,6 +171,13 @@ datasources:
     isDefault: true
     editable: false
     uid: prometheus
+
+  - name: Loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    editable: false
+    uid: loki
 GF_DS_EOF
 
 # ── Grafana 프로비저닝: 대시보드 프로바이더 ──
@@ -202,11 +243,28 @@ route:
   group_wait:      10s
   group_interval:  5m
   repeat_interval: 1h
-  receiver: 'default'
+  receiver: 'slack'
+
+  routes:
+    - match:
+        severity: critical
+      receiver: 'slack'
+      repeat_interval: 15m
 
 receivers:
-  - name: 'default'
-    webhook_configs: []
+  - name: 'slack'
+    slack_configs:
+      - api_url: 'SLACK_WEBHOOK_PLACEHOLDER'
+        send_resolved: true
+        channel: '#alerts'
+        title: '[{{ .Status | toUpper }}] {{ .GroupLabels.alertname }}'
+        text: >-
+          {{ range .Alerts }}
+          *심각도*: {{ .Labels.severity }}
+          *요약*: {{ .Annotations.summary }}
+          *시작*: {{ .StartsAt.Format "2006-01-02 15:04:05" }}
+          ---
+          {{ end }}
 
 inhibit_rules:
   - source_match:
@@ -325,6 +383,104 @@ groups:
         annotations:
           summary: "모니터링 서버 CPU {{ $value }}%"
 RULES_EOF
+
+# ── Loki 설정 ──
+cat > loki/loki-config.yml << 'LOKI_EOF'
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+
+common:
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: "2024-01-01"
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  retention_period: 168h
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+
+ruler:
+  storage:
+    type: local
+    local:
+      directory: /loki/rules
+  rule_path: /tmp/loki-rules
+  alertmanager_url: http://alertmanager:9093
+  enable_alertmanager_v2: true
+  ring:
+    kvstore:
+      store: inmemory
+  enable_api: true
+  evaluation_interval: 1m
+LOKI_EOF
+
+# ── Loki Alert Rules ──
+cat > loki/rules/fake/alerts.yml << 'LOKI_RULES_EOF'
+groups:
+  - name: log-errors
+    rules:
+      - alert: ContainerErrorLogs
+        expr: |
+          sum by (container) (count_over_time({container=~".+"} |= "ERROR" [5m])) > 5
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.container }} 5min ERROR {{ $value }}"
+
+      - alert: ContainerCriticalLog
+        expr: |
+          sum by (container) (count_over_time({container=~".+"} |~ "CRITICAL|FATAL|panic" [5m])) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.container }} CRITICAL error detected"
+LOKI_RULES_EOF
+
+# ── Promtail 설정 ──
+cat > promtail/promtail-config.yml << 'PROMTAIL_EOF'
+server:
+  http_listen_port: 9080
+
+positions:
+  filename: /tmp/positions.yaml
+
+clients:
+  - url: http://loki:3100/loki/api/v1/push
+
+scrape_configs:
+  - job_name: docker
+    docker_sd_configs:
+      - host: unix:///var/run/docker.sock
+        refresh_interval: 10s
+    relabel_configs:
+      - source_labels: ['__meta_docker_container_name']
+        regex: '/(.*)'
+        target_label: container
+    pipeline_stages:
+      - docker: {}
+PROMTAIL_EOF
 
 # ── docker-compose 실행 ──
 cd /opt/monitoring
