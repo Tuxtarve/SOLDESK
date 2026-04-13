@@ -196,6 +196,18 @@ module "eks" {
   depends_on = [module.network, null_resource.post_eks_vpc_cleanup]
 }
 
+# Internal ALB DNS lookup (ALB Ingress Controller가 생성한 ALB)
+# alb_listener_arn이 채워진 후에만 lookup, 첫 apply 사이클에서는 빈 문자열
+data "aws_lb_listener" "ingress" {
+  count = var.alb_listener_arn != "" ? 1 : 0
+  arn   = var.alb_listener_arn
+}
+
+data "aws_lb" "ingress" {
+  count = var.alb_listener_arn != "" ? 1 : 0
+  arn   = data.aws_lb_listener.ingress[0].load_balancer_arn
+}
+
 module "monitoring" {
   source            = "./modules/monitoring"
   env               = var.env
@@ -204,6 +216,7 @@ module "monitoring" {
   key_name          = var.key_name
   redis_host        = module.elasticache.redis_endpoint
   slack_webhook_url = var.slack_webhook_url
+  alb_dns           = var.alb_listener_arn != "" ? data.aws_lb.ingress[0].dns_name : ""
 
   # destroy 시 EC2가 네트워크(SG/서브넷)보다 먼저 삭제되도록 보장
   depends_on = [module.network, module.elasticache]

@@ -15,3 +15,8 @@ variable "slack_webhook_url" {
   default     = ""
   sensitive   = true
 }
+variable "alb_dns" {
+  type        = string
+  description = "Internal ALB DNS for scraping reserv/event/worker metrics"
+  default     = ""
+}

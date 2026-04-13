@@ -263,6 +263,21 @@ scrape_configs:
   - job_name: 'prometheus'
     static_configs:
       - targets: ['localhost:9090']
+
+  - job_name: 'reserv-svc'
+    static_configs:
+      - targets: ['${alb_dns}']
+    metrics_path: /reserv-metrics
+
+  - job_name: 'event-svc'
+    static_configs:
+      - targets: ['${alb_dns}']
+    metrics_path: /event-metrics
+
+  - job_name: 'worker-svc'
+    static_configs:
+      - targets: ['${alb_dns}']
+    metrics_path: /worker-metrics
 PROM_EOF
 
 # ── alertmanager.yml ──

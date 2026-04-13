@@ -46,6 +46,7 @@ resource "aws_instance" "monitoring" {
   user_data_base64 = base64gzip(templatefile("${path.module}/userdata.sh", {
     redis_host        = var.redis_host
     slack_webhook_url = var.slack_webhook_url
+    alb_dns           = var.alb_dns
   }))
 
   root_block_device {
