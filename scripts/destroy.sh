@@ -30,6 +30,21 @@ terraform state rm 'module.monitoring.aws_ebs_volume.monitoring_data' 2>/dev/nul
   || echo "  ebs volume: state에 없음 (이미 분리됨)"
 echo ""
 
+# ── ALB data source state 분리 ──────────────────────────────────
+# main.tf의 data "aws_lb_listener" / "aws_lb"가 state에 박혀있으면 plan 시
+# refresh 단계에서 옛 ALB ARN으로 lookup하다 NotFound로 destroy가 fail함.
+# data source는 state에서 빼도 AWS 리소스에 영향 0.
+echo "============================================="
+echo " ALB data source state 분리"
+echo "============================================="
+terraform state rm 'data.aws_lb_listener.ingress[0]' 2>/dev/null \
+  && echo "  lb_listener data source: state 분리 완료" \
+  || echo "  lb_listener data source: state에 없음"
+terraform state rm 'data.aws_lb.ingress[0]' 2>/dev/null \
+  && echo "  lb data source: state 분리 완료" \
+  || echo "  lb data source: state에 없음"
+echo ""
+
 # ── VPC ID 확인 ──────────────────────────────────────────────────
 get_vpc_id() {
   local vpc_id
