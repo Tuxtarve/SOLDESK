@@ -192,9 +192,6 @@ COMPOSE_EOF
 # docker-compose.yml 내 REDIS_HOST 치환
 sed -i "s|REDIS_HOST_PLACEHOLDER|${redis_host}|g" docker-compose.yml
 
-# alertmanager.yml 내 SLACK_WEBHOOK 치환
-sed -i "s|SLACK_WEBHOOK_PLACEHOLDER|${slack_webhook_url}|g" alertmanager/alertmanager.yml
-
 # ── Grafana 프로비저닝: 데이터소스 ──
 cat > grafana/provisioning/datasources/prometheus.yml << 'GF_DS_EOF'
 apiVersion: 1
@@ -308,6 +305,9 @@ inhibit_rules:
       severity: 'warning'
     equal: ['alertname']
 ALERT_EOF
+
+# alertmanager.yml 내 SLACK_WEBHOOK 치환 (파일 생성 후 수행)
+sed -i "s|SLACK_WEBHOOK_PLACEHOLDER|${slack_webhook_url}|g" alertmanager/alertmanager.yml
 
 # ── cloudwatch exporter config ──
 cat > cloudwatch/config.yml << 'CW_EOF'
