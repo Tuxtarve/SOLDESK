@@ -49,11 +49,11 @@ resource "aws_apigatewayv2_authorizer" "cognito" {
 # v2는 ALB·NLB·CloudMap을 직접 지원 (v1과 달리 NLB 강제 X)
 resource "aws_security_group" "vpc_link" {
   name        = "ticketing-apigw-vpclink-sg"
-  description = "API Gateway VPC Link → Internal ALB"
+  description = "API Gateway VPC Link to Internal ALB"
   vpc_id      = var.vpc_id
 
   egress {
-    description = "Internal ALB로 HTTP"
+    description = "To Internal ALB (HTTP)"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"

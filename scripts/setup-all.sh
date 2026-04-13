@@ -16,6 +16,135 @@ if [[ -z "${DB_PASSWORD:-}" ]]; then
   exit 1
 fi
 
+# ── 0.1. helm 자동 설치 (install-* 스크립트 3종이 전부 helm 필요) ──
+# Git Bash(MINGW) / Linux / macOS 모두 지원. $HOME/bin에 배치 + PATH 주입.
+# 다음 세션부터 PATH 유지되도록 ~/.bashrc에 1회 등록.
+ensure_helm() {
+  if command -v helm >/dev/null 2>&1; then
+    return 0
+  fi
+  # 이전 실행에서 $HOME/bin에 깔았는데 PATH만 빠진 경우
+  if [[ -x "$HOME/bin/helm" || -x "$HOME/bin/helm.exe" ]]; then
+    export PATH="$HOME/bin:$PATH"
+    command -v helm >/dev/null 2>&1 && { echo "helm 기존 설치 발견 (PATH 갱신)"; return 0; }
+  fi
+
+  echo "helm 미설치 → 자동 설치 시작"
+  local HELM_VERSION="v3.16.3"
+  local TMP_DIR
+  TMP_DIR="$(mktemp -d)"
+  mkdir -p "$HOME/bin"
+
+  local UNAME
+  UNAME="$(uname -s 2>/dev/null || echo unknown)"
+  case "$UNAME" in
+    MINGW*|MSYS*|CYGWIN*)
+      local ZIP_NAME="helm-${HELM_VERSION}-windows-amd64.zip"
+      curl -fsSL "https://get.helm.sh/${ZIP_NAME}" -o "$TMP_DIR/helm.zip" \
+        || { echo "ERROR: helm 다운로드 실패"; rm -rf "$TMP_DIR"; return 1; }
+      # Windows에서 가장 확실한 unzip은 PowerShell Expand-Archive
+      local ZIP_WIN OUT_WIN
+      ZIP_WIN="$(cygpath -w "$TMP_DIR/helm.zip" 2>/dev/null || echo "$TMP_DIR/helm.zip")"
+      OUT_WIN="$(cygpath -w "$TMP_DIR" 2>/dev/null || echo "$TMP_DIR")"
+      powershell -NoProfile -Command \
+        "Expand-Archive -Path '$ZIP_WIN' -DestinationPath '$OUT_WIN' -Force" \
+        || { echo "ERROR: helm 압축 해제 실패"; rm -rf "$TMP_DIR"; return 1; }
+      cp "$TMP_DIR/windows-amd64/helm.exe" "$HOME/bin/helm.exe"
+      ;;
+    Linux)
+      local TAR_NAME="helm-${HELM_VERSION}-linux-amd64.tar.gz"
+      curl -fsSL "https://get.helm.sh/${TAR_NAME}" -o "$TMP_DIR/helm.tgz" \
+        || { echo "ERROR: helm 다운로드 실패"; rm -rf "$TMP_DIR"; return 1; }
+      tar xzf "$TMP_DIR/helm.tgz" -C "$TMP_DIR"
+      cp "$TMP_DIR/linux-amd64/helm" "$HOME/bin/helm"
+      chmod +x "$HOME/bin/helm"
+      ;;
+    Darwin)
+      local TAR_NAME="helm-${HELM_VERSION}-darwin-amd64.tar.gz"
+      curl -fsSL "https://get.helm.sh/${TAR_NAME}" -o "$TMP_DIR/helm.tgz" \
+        || { echo "ERROR: helm 다운로드 실패"; rm -rf "$TMP_DIR"; return 1; }
+      tar xzf "$TMP_DIR/helm.tgz" -C "$TMP_DIR"
+      cp "$TMP_DIR/darwin-amd64/helm" "$HOME/bin/helm"
+      chmod +x "$HOME/bin/helm"
+      ;;
+    *)
+      echo "ERROR: 미지원 OS ($UNAME). helm을 직접 설치 후 재시도하세요." >&2
+      rm -rf "$TMP_DIR"
+      return 1
+      ;;
+  esac
+
+  rm -rf "$TMP_DIR"
+  export PATH="$HOME/bin:$PATH"
+
+  if ! command -v helm >/dev/null 2>&1; then
+    echo "ERROR: helm 자동 설치 실패" >&2
+    return 1
+  fi
+
+  echo "helm 설치 완료: $(helm version --short 2>/dev/null || echo unknown) → $HOME/bin"
+
+  # ~/.bashrc에 PATH 영구 등록 (중복 방지)
+  if [[ -f "$HOME/.bashrc" ]] && ! grep -q 'HOME/bin' "$HOME/.bashrc" 2>/dev/null; then
+    echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.bashrc"
+    echo "  → ~/.bashrc에 PATH 영구 등록"
+  fi
+}
+
+ensure_helm
+
+# ── 0.2. kubectl 자동 설치 (EKS 1.30 호환 kubectl v1.30.0) ──
+# helm은 내부 k8s 클라이언트를 써서 kubectl 없이도 돌지만,
+# apply-ticketing-k8s.sh · DB 스키마 초기화 · rollout · ingress 조회 등에서 kubectl 필수.
+ensure_kubectl() {
+  if command -v kubectl >/dev/null 2>&1; then
+    return 0
+  fi
+  if [[ -x "$HOME/bin/kubectl" || -x "$HOME/bin/kubectl.exe" ]]; then
+    export PATH="$HOME/bin:$PATH"
+    command -v kubectl >/dev/null 2>&1 && { echo "kubectl 기존 설치 발견 (PATH 갱신)"; return 0; }
+  fi
+
+  echo "kubectl 미설치 → 자동 설치 시작"
+  mkdir -p "$HOME/bin"
+  local KUBECTL_VERSION="v1.30.0"
+  local UNAME
+  UNAME="$(uname -s 2>/dev/null || echo unknown)"
+
+  case "$UNAME" in
+    MINGW*|MSYS*|CYGWIN*)
+      curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/windows/amd64/kubectl.exe" \
+        -o "$HOME/bin/kubectl.exe" \
+        || { echo "ERROR: kubectl 다운로드 실패"; return 1; }
+      ;;
+    Linux)
+      curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl" \
+        -o "$HOME/bin/kubectl" \
+        || { echo "ERROR: kubectl 다운로드 실패"; return 1; }
+      chmod +x "$HOME/bin/kubectl"
+      ;;
+    Darwin)
+      curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/darwin/amd64/kubectl" \
+        -o "$HOME/bin/kubectl" \
+        || { echo "ERROR: kubectl 다운로드 실패"; return 1; }
+      chmod +x "$HOME/bin/kubectl"
+      ;;
+    *)
+      echo "ERROR: 미지원 OS ($UNAME). kubectl 수동 설치 후 재시도." >&2
+      return 1
+      ;;
+  esac
+
+  export PATH="$HOME/bin:$PATH"
+  if ! command -v kubectl >/dev/null 2>&1; then
+    echo "ERROR: kubectl 자동 설치 실패" >&2
+    return 1
+  fi
+  echo "kubectl 설치 완료 → $HOME/bin"
+}
+
+ensure_kubectl
+
 # ── 0.5. 영구 EBS 볼륨 import (이전 destroy/apply 사이클에서 살아남은 볼륨 재사용) ──
 echo "=========================================="
 echo " [0.5] 모니터링 영구 EBS 볼륨 확인"
@@ -122,7 +251,9 @@ cat "$ROOT/db/seed.sql" | kubectl exec -i mysql-init -n ticketing -- \
 kubectl delete pod mysql-init -n ticketing --wait=false
 echo "DB 스키마 + 시드 데이터 적용 완료"
 
-# ── 7. Docker 이미지 빌드 & ECR Push ──
+# ── 7. Docker 이미지 빌드 & ECR Push (docker 없으면 skip) ──
+# Docker Desktop은 GUI 설치 + 재부팅이 필요해 자동 설치 불가. 미설치 환경에서는
+# 단계를 skip하고 CI/CD 경로 안내. setup-all.sh는 step 8~11까지 완주됨.
 echo ""
 echo "=========================================="
 echo " [7/8] Docker 이미지 빌드 & ECR Push"
@@ -130,20 +261,42 @@ echo "=========================================="
 ACCOUNT_ID="$(terraform output -raw aws_account_id)"
 ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
 
-aws ecr get-login-password --region "$REGION" | \
-  docker login --username AWS --password-stdin "$ECR_REGISTRY"
+if ! command -v docker >/dev/null 2>&1; then
+  echo "WARNING: docker CLI 미설치 — step 7 (이미지 빌드+푸시) skip."
+  echo ""
+  echo "  파드들은 이미지가 ECR에 올라갈 때까지 ImagePullBackOff 상태로 대기합니다."
+  echo ""
+  echo "  이미지를 올리는 방법:"
+  echo "    1) Docker Desktop 설치 후 재실행: https://www.docker.com/products/docker-desktop/"
+  echo "    2) GitHub Actions (module.cicd가 이미 github_actions_role 제공):"
+  echo "       - .github/workflows/에서 \$(terraform output -raw github_actions_role_arn) 사용"
+  echo "    3) AWS CloudShell에서 수동 빌드:"
+  echo "       - 레포 clone → 아래 명령 복붙"
+  echo ""
+  echo "       aws ecr get-login-password --region $REGION | \\"
+  echo "         docker login --username AWS --password-stdin $ECR_REGISTRY"
+  echo "       for SVC in event-svc reserv-svc worker-svc; do"
+  echo "         docker build -t $ECR_REGISTRY/ticketing/\$SVC:latest services/\$SVC"
+  echo "         docker push $ECR_REGISTRY/ticketing/\$SVC:latest"
+  echo "       done"
+  echo "       kubectl rollout restart deployment -n ticketing"
+  echo ""
+else
+  aws ecr get-login-password --region "$REGION" | \
+    docker login --username AWS --password-stdin "$ECR_REGISTRY"
 
-for SVC in event-svc reserv-svc worker-svc; do
-  echo "빌드 & 푸시: $SVC"
-  docker build -t "${ECR_REGISTRY}/ticketing/${SVC}:latest" "$ROOT/services/${SVC}"
-  docker push "${ECR_REGISTRY}/ticketing/${SVC}:latest"
-done
+  for SVC in event-svc reserv-svc worker-svc; do
+    echo "빌드 & 푸시: $SVC"
+    docker build -t "${ECR_REGISTRY}/ticketing/${SVC}:latest" "$ROOT/services/${SVC}"
+    docker push "${ECR_REGISTRY}/ticketing/${SVC}:latest"
+  done
 
-kubectl rollout restart deployment -n ticketing
-echo "이미지 배포 완료, 파드 재시작 중..."
-kubectl rollout status deployment/event-svc -n ticketing --timeout=120s
-kubectl rollout status deployment/reserv-svc -n ticketing --timeout=120s
-kubectl rollout status deployment/worker-svc -n ticketing --timeout=120s
+  kubectl rollout restart deployment -n ticketing
+  echo "이미지 배포 완료, 파드 재시작 중..."
+  kubectl rollout status deployment/event-svc -n ticketing --timeout=120s
+  kubectl rollout status deployment/reserv-svc -n ticketing --timeout=120s
+  kubectl rollout status deployment/worker-svc -n ticketing --timeout=120s
+fi
 
 # ── 8. 프론트엔드 S3 배포 ──
 echo ""
@@ -211,17 +364,23 @@ else
     else
       echo "Listener ARN: $LISTENER_ARN"
 
-      # terraform.tfvars에 alb_listener_arn 저장 → 다음 apply에서 API GW Integration/Route 생성
+      # terraform.tfvars에 alb_listener_arn + frontend_callback_domain 저장
+      # → 다음 apply에서 API GW Integration/Route 생성 + Cognito 콜백 URL 실제 도메인으로 갱신
       TFVARS="$TF_DIR/terraform.tfvars"
       if [[ -f "$TFVARS" ]] && grep -q '^alb_listener_arn' "$TFVARS"; then
         sed -i "s|^alb_listener_arn.*|alb_listener_arn = \"$LISTENER_ARN\"|" "$TFVARS"
       else
         echo "alb_listener_arn = \"$LISTENER_ARN\"" >> "$TFVARS"
       fi
-      echo "terraform.tfvars에 alb_listener_arn 저장 완료"
+      if [[ -f "$TFVARS" ]] && grep -q '^frontend_callback_domain' "$TFVARS"; then
+        sed -i "s|^frontend_callback_domain.*|frontend_callback_domain = \"$CLOUDFRONT_DOMAIN\"|" "$TFVARS"
+      else
+        echo "frontend_callback_domain = \"$CLOUDFRONT_DOMAIN\"" >> "$TFVARS"
+      fi
+      echo "terraform.tfvars에 alb_listener_arn + frontend_callback_domain 저장 완료"
 
-      # Terraform 재실행 → API GW Integration + Route 생성, CloudFront 캐시 동작 갱신
-      echo "Terraform apply 재실행 중 (API GW Integration 생성)..."
+      # Terraform 재실행 → API GW Integration + Route 생성, Cognito 콜백 URL 갱신
+      echo "Terraform apply 재실행 중 (API GW Integration 생성 + Cognito 콜백 갱신)..."
       terraform -chdir="$TF_DIR" apply -auto-approve
       echo "API GW Integration 생성 완료. CloudFront 전파 3~5분 소요"
     fi

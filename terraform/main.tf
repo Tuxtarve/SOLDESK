@@ -34,7 +34,8 @@ module "cognito" {
   env                   = var.env
   app_name              = var.app_name
   cognito_domain_prefix = var.cognito_domain_prefix
-  cloudfront_domain     = module.cloudfront.cloudfront_domain
+  # root-level var 경유로 순환 참조 차단 (module.cloudfront → cognito 직접 참조 금지)
+  cloudfront_domain = var.frontend_callback_domain
 }
 
 module "s3" {

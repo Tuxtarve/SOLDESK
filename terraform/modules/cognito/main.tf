@@ -98,8 +98,10 @@ resource "aws_cognito_user_pool_client" "web" {
     refresh_token = "days"
   }
 
-  callback_urls = ["https://${var.cloudfront_domain}/callback"]
-  logout_urls   = ["https://${var.cloudfront_domain}/logout"]
+  # 첫 apply 시 cloudfront_domain=""이면 localhost placeholder 사용 (cycle 차단).
+  # setup-all.sh가 CF 도메인을 tfvars에 박은 뒤 재apply하면 실제 URL로 갱신된다.
+  callback_urls = [var.cloudfront_domain != "" ? "https://${var.cloudfront_domain}/callback" : "http://localhost:3000/callback"]
+  logout_urls   = [var.cloudfront_domain != "" ? "https://${var.cloudfront_domain}/logout" : "http://localhost:3000/logout"]
 
   allowed_oauth_flows                  = ["code"]
   allowed_oauth_scopes                 = ["openid", "email", "profile"]

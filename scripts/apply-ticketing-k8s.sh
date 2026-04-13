@@ -18,9 +18,9 @@ if [[ -z "${COGNITO_JSON}" ]]; then
  fi
 export COGNITO_JSON
 
-# Writer는 RDS Proxy 엔드포인트 사용 (커넥션 풀링 + failover 가속)
-# Reader는 RDS Read Replica 직접 사용 (Proxy 없음)
-DB_W="$(terraform output -raw rds_proxy_endpoint)"
+# Writer는 RDS Writer 직접 접근 (파드당 aiomysql maxsize=3으로 커넥션 수 제한)
+# Reader는 RDS Read Replica 직접 접근
+DB_W="$(terraform output -raw rds_writer_endpoint)"
 DB_R="$(terraform output -raw rds_reader_endpoint)"
 REDIS_H="$(terraform output -raw redis_endpoint)"
 SQS_URL="$(terraform output -raw sqs_queue_url)"

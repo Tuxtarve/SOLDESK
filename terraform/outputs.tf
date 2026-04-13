@@ -20,12 +20,6 @@ output "rds_reader_endpoint" {
   sensitive = true
 }
 
-output "rds_proxy_endpoint" {
-  description = "RDS Proxy 엔드포인트 — 앱이 writer 대신 사용"
-  value       = module.rds.proxy_endpoint
-  sensitive   = true
-}
-
 output "redis_endpoint" {
   value     = module.elasticache.redis_endpoint
   sensitive = true

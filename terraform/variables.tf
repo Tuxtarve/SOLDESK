@@ -46,6 +46,16 @@ variable "alb_listener_arn" {
   default     = ""
 }
 
+# cognito <-> cloudfront <-> api_gateway 순환 참조를 끊기 위해 root-level 변수로 관리.
+# 첫 apply: 빈 문자열 → cognito는 http://localhost placeholder URL 사용
+# setup-all.sh가 첫 apply 후 cloudfront_domain을 tfvars에 박고 재apply하면
+# 실제 CloudFront 도메인으로 callback/logout URL이 갱신된다.
+variable "frontend_callback_domain" {
+  description = "Cognito 콜백/로그아웃 URL 생성용 프론트엔드 도메인 (CloudFront). setup-all.sh가 자동 주입."
+  type        = string
+  default     = ""
+}
+
 variable "slack_webhook_url" {
   description = "Slack Incoming Webhook URL for Alertmanager"
   type        = string
