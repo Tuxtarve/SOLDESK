@@ -65,9 +65,14 @@ resource "aws_eip" "monitoring" {
 
 # ── 영구 데이터 EBS 볼륨 ─────────────────────────────────────────
 # Prometheus tsdb / Grafana SQLite / Loki chunks 보관용
-# destroy/apply 사이클을 돌려도 데이터를 보존하기 위해 EC2 root와 분리
-# prevent_destroy로 실수 삭제 방지 — 평소 destroy는 scripts/destroy.sh가
-# 자동으로 state에서 분리한 뒤 지우므로 EBS 자체는 AWS에 그대로 남는다
+# destroy/apply 사이클에서 데이터 보존 책임은 scripts/destroy.sh가 짐:
+#   1) destroy 시작 시 state에서 EBS와 attachment를 분리
+#   2) terraform destroy는 state에 없는 리소스를 건드리지 않음
+#   3) AWS 상의 EBS 볼륨은 그대로 남음 → 다음 setup-all.sh가 import해서 재사용
+# prevent_destroy lifecycle은 의도적으로 두지 않는다. 이전에 prevent_destroy=true
+# 였을 때, destroy.sh를 거치지 않고 직접 terraform destroy를 호출하면 plan 단계
+# 에서 fail해 사이클 자체가 막히는 데드락이 발생했음. 보호 책임을 destroy.sh
+# 한 곳에 일원화한다.
 resource "aws_ebs_volume" "monitoring_data" {
   availability_zone = aws_instance.monitoring.availability_zone
   size              = 50
@@ -78,10 +83,6 @@ resource "aws_ebs_volume" "monitoring_data" {
     Name        = "ticketing-monitoring-data"
     Environment = var.env
     Persistent  = "true"
-  }
-
-  lifecycle {
-    prevent_destroy = true
   }
 }
 
