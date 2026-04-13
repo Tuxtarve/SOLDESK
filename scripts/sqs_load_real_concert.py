@@ -6,7 +6,6 @@
   - 공연 제목: 「2026 봄 페스티벌 LIVE - 5만석」
 
   • 기본: SQS FIFO (워커 본문과 동일 JSON, MessageGroupId = show_id-user_id).
-    send_message_batch 는 **메시지당 예매 1건**(Entry = 메시지 1개).
   • --via-was: POST /api/write/concerts/booking/commit 만.
   • --also-via-was: 좌석 반씩 SQS + Write API.
 
@@ -18,11 +17,6 @@ Write API: (write_api_건수 > 0) WRITE_API_BASE_URL / --write-api-base
 
 주의: 실제 concert_booking / concert_booking_seats / concert_payment 가 쌓인다.
 회차 선택: RDS NOW() 기준 cs.show_date >= NOW() (자동·--show-id 공통).
-
-JSON 시간 필드(실전 전송 시):
-  준비_소요_초(DB·본문 구성), 전송_소요_초(SQS+Write API+선택 HTTP 폴링), 큐_소진_대기_초(가시+인플라이트+지연≈0),
-  폴링_소요_초(--http-poll 시), 전체_소요_초·소요_초(스크립트 시작~종료, 기본은 큐 소진 대기 포함).
-  큐 대기 생략: --no-wait-sqs-queue / 타임아웃·간격: --wait-queue-timeout-sec, --wait-queue-poll-sec
 
 예:
   python3 ../scripts/sqs_load_real_concert.py -n 100 --dry-run
@@ -54,10 +48,21 @@ except ImportError:
     sys.exit(1)
 
 import http_booking_client as http_w
-from sqs_load_common import wait_sqs_queue_idle
 
 # db-schema/Insert.sql — 5만석 콘서트 시드
 DEFAULT_CONCERT_TITLE = "2026 봄 페스티벌 LIVE - 5만석"
+
+
+def _seat_shard_id(seat_key: str, shards: int) -> int:
+    """seat_key="r-c" → show 내부 샤드 id (FIFO 그룹 분산용)."""
+    try:
+        r_s, c_s = seat_key.split("-", 1)
+        r = int(r_s)
+        c = int(c_s)
+    except Exception:
+        return 0
+    n = max(1, min(1024, int(shards)))
+    return ((r * 1000003) ^ c) % n
 
 
 def _terraform_dir() -> Path:
@@ -206,21 +211,9 @@ def _pick_show(cur, show_id: Optional[int], concert_title: str):
         cur.execute(
             """
             SELECT cs.show_id, cs.concert_id, cs.show_date, cs.seat_rows, cs.seat_cols,
-                   cs.total_count,
-                   GREATEST(0, cs.total_count - IFNULL(cb.cnt, 0)) AS remain_count,
-                   CASE
-                     WHEN GREATEST(0, cs.total_count - IFNULL(cb.cnt, 0)) <= 0 THEN 'CLOSED'
-                     WHEN UPPER(COALESCE(cs.status, '')) = 'CLOSED' THEN 'CLOSED'
-                     ELSE 'OPEN'
-                   END AS status,
-                   c.title AS concert_title
+                   cs.total_count, cs.remain_count, cs.status, c.title AS concert_title
             FROM concert_shows cs
             INNER JOIN concerts c ON c.concert_id = cs.concert_id
-            LEFT JOIN (
-                SELECT show_id, COUNT(*) AS cnt FROM concert_booking_seats
-                WHERE UPPER(COALESCE(status, '')) = 'ACTIVE'
-                GROUP BY show_id
-            ) cb ON cb.show_id = cs.show_id
             WHERE cs.show_id = %s
               AND cs.show_date >= NOW()
             """,
@@ -235,26 +228,14 @@ def _pick_show(cur, show_id: Optional[int], concert_title: str):
     cur.execute(
         """
         SELECT cs.show_id, cs.concert_id, cs.show_date, cs.seat_rows, cs.seat_cols,
-               cs.total_count,
-               GREATEST(0, cs.total_count - IFNULL(cb.cnt, 0)) AS remain_count,
-               CASE
-                 WHEN GREATEST(0, cs.total_count - IFNULL(cb.cnt, 0)) <= 0 THEN 'CLOSED'
-                 WHEN UPPER(COALESCE(cs.status, '')) = 'CLOSED' THEN 'CLOSED'
-                 ELSE 'OPEN'
-               END AS status,
-               c.title AS concert_title
+               cs.total_count, cs.remain_count, cs.status, c.title AS concert_title
         FROM concert_shows cs
         INNER JOIN concerts c ON c.concert_id = cs.concert_id
-        LEFT JOIN (
-            SELECT show_id, COUNT(*) AS cnt FROM concert_booking_seats
-            WHERE UPPER(COALESCE(status, '')) = 'ACTIVE'
-            GROUP BY show_id
-        ) cb ON cb.show_id = cs.show_id
         WHERE c.title = %s
           AND UPPER(COALESCE(cs.status, '')) = 'OPEN'
-          AND GREATEST(0, cs.total_count - IFNULL(cb.cnt, 0)) > 0
+          AND cs.remain_count > 0
           AND cs.show_date >= NOW()
-        ORDER BY cs.show_date ASC, GREATEST(0, cs.total_count - IFNULL(cb.cnt, 0)) DESC
+        ORDER BY cs.show_date ASC, cs.remain_count DESC
         LIMIT 1
         """,
         (concert_title,),
@@ -310,6 +291,12 @@ def parse_args():
     )
     p.add_argument("--queue-url", default=os.getenv("SQS_QUEUE_URL", "").strip())
     p.add_argument(
+        "--fifo-shards",
+        type=int,
+        default=int(os.getenv("CONCERT_FIFO_SHARDS", "64") or 64),
+        help="SQS FIFO MessageGroupId를 show_id 단일이 아니라 show_id+shard로 분산(기본 64)",
+    )
+    p.add_argument(
         "--region",
         default=os.getenv("AWS_DEFAULT_REGION", os.getenv("AWS_REGION", "ap-northeast-2")),
     )
@@ -341,25 +328,6 @@ def parse_args():
         type=float,
         default=120.0,
         help="--http-poll 시 건당 최대 대기(초)",
-    )
-    p.add_argument(
-        "--no-wait-sqs-queue",
-        action="store_true",
-        help="SQS 전송 후 큐(가시+인플라이트+지연)가 비워질 때까지 대기하지 않음",
-    )
-    p.add_argument(
-        "--wait-queue-timeout-sec",
-        type=float,
-        default=900.0,
-        metavar="SEC",
-        help="큐 소진 대기 최대(초), 기본 900",
-    )
-    p.add_argument(
-        "--wait-queue-poll-sec",
-        type=float,
-        default=2.0,
-        metavar="SEC",
-        help="큐 깊이 폴링 간격(초), 기본 2",
     )
     return p.parse_args()
 
@@ -464,6 +432,7 @@ def main():
             "실제_건수": n_alloc,
             "경로": {"sqs_건수": sqs_n, "write_api_건수": http_n},
             "메시지_수": len(bodies) + len(http_seats),
+            "fifo_shards": int(args.fifo_shards),
             "샘플_좌석": seats[:5],
         }
         if spread > 1:
@@ -474,15 +443,8 @@ def main():
             }
 
         if args.dry_run:
-            _t1 = time.monotonic()
-            summary["준비_소요_초"] = round(_t1 - t0, 3)
-            summary["전송_소요_초"] = 0.0
-            summary["큐_소진_대기_초"] = 0.0
-            summary["큐_대기_타임아웃"] = False
-            summary["폴링_소요_초"] = 0.0
-            summary["전체_소요_초"] = round(_t1 - t0, 3)
-            summary["소요_초"] = summary["전체_소요_초"]
-            summary["테스트후_잔여좌석"] = remain - args.count
+            summary["소요_초"] = round(time.monotonic() - t0, 3)
+            summary["테스트후_잔여좌석"] = remain
             print(json.dumps(summary, indent=2, ensure_ascii=False))
             if bodies:
                 print("--- dry-run SQS 본문 샘플(최대 3) ---")
@@ -511,8 +473,6 @@ def main():
 
         sent = 0
         errors = 0
-        sqs = None
-        t_tx_start = time.monotonic()
         if sqs_n > 0:
             sqs = boto3.client("sqs", region_name=args.region)
             for batch_start in range(0, len(bodies), 10):
@@ -520,11 +480,13 @@ def main():
                 entries = []
                 for j, body in enumerate(chunk):
                     raw = json.dumps(body, sort_keys=True)
+                    seat_key = (body.get("seats") or [""])[0]
+                    shard = _seat_shard_id(str(seat_key), int(args.fifo_shards))
                     entries.append(
                         {
                             "Id": str(j),
                             "MessageBody": raw,
-                            "MessageGroupId": f"{sid}-{body['user_id']}",
+                            "MessageGroupId": f"{sid}-sh{shard}",
                         }
                     )
                 try:
@@ -553,9 +515,7 @@ def main():
                     print(f"Write API 실패 HTTP {code} seat={sk} body={j!r}", file=sys.stderr)
 
         polled: dict[str, dict] = {}
-        poll_sec = 0.0
         if args.http_poll and http_refs:
-            t_poll0 = time.monotonic()
             for ref, sk in http_refs:
                 polled[f"{ref}({sk})"] = http_w.poll_booking_status(
                     write_base,
@@ -563,12 +523,7 @@ def main():
                     "concert",
                     timeout_sec=float(args.poll_sec),
                 )
-            poll_sec = round(time.monotonic() - t_poll0, 3)
             summary["HTTP_폴링_결과"] = polled
-
-        t_tx_done = time.monotonic()
-        prep_sec = round(t_tx_start - t0, 3)
-        tx_sec = round(t_tx_done - t_tx_start, 3)
 
         summary["SQS_전송_성공"] = sent
         summary["SQS_전송_실패"] = errors
@@ -576,30 +531,19 @@ def main():
         summary["HTTP_접수_실패"] = http_fail
         summary["전송_성공"] = sent + http_ok
         summary["전송_실패"] = errors + http_fail
-
-        if sqs_n > 0 and not args.no_wait_sqs_queue and sqs is not None:
-            summary.update(
-                wait_sqs_queue_idle(
-                    sqs,
-                    queue_url,
-                    timeout_sec=float(args.wait_queue_timeout_sec),
-                    poll_interval_sec=float(args.wait_queue_poll_sec),
+        summary["소요_초"] = round(time.monotonic() - t0, 3)
+        c_rem = _db_connect(dbn)
+        try:
+            c_rem.autocommit(True)
+            with c_rem.cursor() as cur:
+                cur.execute(
+                    "SELECT remain_count FROM concert_shows WHERE show_id = %s",
+                    (sid,),
                 )
-            )
-        else:
-            summary["큐_소진_대기_초"] = 0.0
-            summary["큐_대기_타임아웃"] = False
-            summary["큐_종료_가시"] = None
-            summary["큐_종료_인플라이트"] = None
-            summary["큐_종료_지연"] = None
-
-        t_final = time.monotonic()
-        summary["준비_소요_초"] = prep_sec
-        summary["전송_소요_초"] = tx_sec
-        summary["폴링_소요_초"] = poll_sec
-        summary["전체_소요_초"] = round(t_final - t0, 3)
-        summary["소요_초"] = summary["전체_소요_초"]
-        summary["테스트후_잔여좌석"] = remain - args.count
+                _row = cur.fetchone()
+            summary["테스트후_잔여좌석"] = int(_row["remain_count"]) if _row else None
+        finally:
+            c_rem.close()
         print(json.dumps(summary, indent=2, ensure_ascii=False))
         if errors or http_fail:
             sys.exit(1)

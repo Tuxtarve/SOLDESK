@@ -86,6 +86,10 @@ CONCERT_SHOWS_META_TTL_SEC = _get_int_env("CONCERT_SHOWS_META_TTL_SEC", 120, min
 CONCERTS_LIST_CACHE_TTL_SEC = _get_int_env("CONCERTS_LIST_CACHE_TTL_SEC", 0, minimum=0)
 CONCERT_DETAIL_CACHE_TTL_SEC = _get_int_env("CONCERT_DETAIL_CACHE_TTL_SEC", 0, minimum=0)
 
+# 콘서트 좌석 홀드(접수 확정) TTL(초): Write API에서 좌석을 먼저 홀드하고, Read/UI는 홀드 수를 즉시 remain에 반영.
+# worker가 DB에 최종 커밋을 하더라도 UI는 "확정된(홀드된) 수량" 기준으로 즉시 줄어든 값을 보게 된다.
+CONCERT_SEAT_HOLD_TTL_SEC = _get_int_env("CONCERT_SEAT_HOLD_TTL_SEC", 600, minimum=10)
+
 # ── 향후 Cognito + API Gateway (지금은 미사용 · AUTH_MODE=legacy 유지) ────────
 # JWT 검증은 나중에 JWKS/issuer 기준으로 붙이면 됨. DB에 토큰 저장은 필수 아님.
 AUTH_MODE = os.getenv("AUTH_MODE", "legacy").strip().lower()
@@ -96,17 +100,6 @@ COGNITO_APP_CLIENT_ID = os.getenv("COGNITO_APP_CLIENT_ID", "").strip()
 # ── SQS ──────────────────────────────────────────────────────────────────────
 AWS_REGION    = os.getenv("AWS_REGION", "")
 SQS_QUEUE_URL = os.getenv("SQS_QUEUE_URL", "")
-# UI(인터랙티브) 큐. 없으면 SQS_QUEUE_URL 로 폴백.
-SQS_QUEUE_INTERACTIVE_URL = os.getenv("SQS_QUEUE_INTERACTIVE_URL", "").strip()
-# FIFO MessageGroupId 샤딩: 1이면 기존 동작(유저별 순차). 2+면 동일 group_id 요청도 shard로 분산되어
-# 워커 파드가 늘어난 만큼 병렬 소비 가능(순서 보장은 shard 내에서만 유지).
-SQS_MESSAGE_GROUP_SHARDS = _get_int_env("SQS_MESSAGE_GROUP_SHARDS", 1, minimum=1)
-# write-api 라우팅:
-# - ui  : 모든 예매 커밋을 UI 큐로 보냄(= svc-ui 1개만 처리 → 느림)
-# - bulk: 모든 예매 커밋을 bulk 큐로 보냄(= bulk 워커로 분산 → 빠름, svc-ui는 대기)
-BOOKING_QUEUE_MODE = os.getenv("BOOKING_QUEUE_MODE", "ui").strip().lower()
-if BOOKING_QUEUE_MODE not in ("ui", "bulk"):
-    BOOKING_QUEUE_MODE = "ui"
 # 스위치: false면 SQS 호출 자체를 차단한다.
 # NOTE: 현재 write-api는 SQS 동기 폴백(DB 직접 커밋)이 제거된 상태라,
 # SQS_ENABLED=false에서 예매 커밋을 "DB로 즉시" 돌리려면 동기 커밋 경로를 복원해야 한다.

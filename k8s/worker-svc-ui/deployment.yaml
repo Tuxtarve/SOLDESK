@@ -16,6 +16,7 @@ spec:
       labels:
         app: worker-svc-ui
     spec:
+      enableServiceLinks: false
       priorityClassName: ticketing-priority-worker-ui
       affinity:
         podAntiAffinity:

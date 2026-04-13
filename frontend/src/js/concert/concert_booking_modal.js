@@ -1,9 +1,9 @@
 (function () {
   const THEATERS_DETAIL_CSS_PATH = '/css/theaters/theaters_detail.css';
-  const THEATERS_DETAIL_CSS_URL = `${THEATERS_DETAIL_CSS_PATH}?v=20260413_concert_base`;
+  const THEATERS_DETAIL_CSS_URL = `${THEATERS_DETAIL_CSS_PATH}?v=20260408_concert_base`;
 
   const CONCERT_MODAL_CSS_PATH = '/css/concert/concert_booking_modal.css';
-  const CONCERT_MODAL_CSS_URL = `${CONCERT_MODAL_CSS_PATH}?v=20260413_concert_nav`;
+  const CONCERT_MODAL_CSS_URL = `${CONCERT_MODAL_CSS_PATH}?v=20260408_concert_modal`;
   const OVERLAY_ID = 'concert-booking-detail-overlay';
   const BODY_ACTIVE_CLASS = 'theaters-booking-modal-open';
 
@@ -134,7 +134,7 @@
 
   function createSeatLabel(row, col) {
     const rowNo = toInt(row);
-    const rowLabel = `${rowNo}열`;
+    const rowLabel = rowNo === 1 ? 'A열' : rowNo === 2 ? 'B열' : rowNo === 3 ? 'C열' : `${rowNo}열`;
     return `${rowLabel} ${col}번`;
   }
 
@@ -165,6 +165,7 @@
     const seatCols = Math.max(1, toInt(show.seat_cols) || 10);
     const seatRows = Math.max(1, toInt(show.seat_rows) || 5);
     const remainCount = Math.max(0, toInt(show.remain_count || 0));
+    const holdCount = Math.max(0, toInt(show.hold_count || 0));
     const totalCount = Math.max(0, toInt(show.total_count || 0)) || seatRows * seatCols;
     const price = Math.max(0, toInt(show.price || 0));
     const showId = toInt(show.show_id);
@@ -210,7 +211,11 @@
             </div>
 
             <section class="theaters-detail-panel theaters-detail-panel-seat" data-panel="1">
-              <div class="theaters-detail-seat-count">잔여좌석 <strong class="theaters-detail-remain">${escapeHtml(String(remainCount))}</strong><span>/${escapeHtml(String(totalCount))}</span></div>
+              <div class="theaters-detail-seat-count">
+                점유 <strong class="theaters-detail-hold">${escapeHtml(String(holdCount))}</strong><span>석</span>
+                <span style="margin:0 6px;opacity:.5;">·</span>
+                잔여좌석 <strong class="theaters-detail-remain">${escapeHtml(String(remainCount))}</strong><span>/${escapeHtml(String(totalCount))}</span>
+              </div>
               <div class="theaters-detail-screen-label">STAGE</div>
               <div class="theaters-detail-screen-bar"></div>
               <div class="theaters-detail-seat-grid"></div>
@@ -262,7 +267,6 @@
     const closeButton = overlay.querySelector('.theaters-detail-close');
     const cancelButton = overlay.querySelector('.theaters-detail-cancel');
     const submitButton = overlay.querySelector('.theaters-detail-submit');
-    const actionsRow = overlay.querySelector('.theaters-detail-actions');
     const seatGrid = overlay.querySelector('.theaters-detail-seat-grid');
     const selectedValue = overlay.querySelector('.theaters-detail-selected-value');
     const selectedCount = overlay.querySelector('.theaters-detail-count');
@@ -326,14 +330,6 @@
       if (confirmPanel) confirmPanel.hidden = step !== 2;
       if (resultPanel) resultPanel.hidden = step !== 3;
 
-      if (step === 3) {
-        if (cancelButton) cancelButton.hidden = true;
-        if (actionsRow) actionsRow.classList.add('is-result-step');
-      } else {
-        if (cancelButton) cancelButton.hidden = false;
-        if (actionsRow) actionsRow.classList.remove('is-result-step');
-      }
-
       if (step === 1) {
         submitButton.textContent = '결제 진행';
         submitButton.disabled = selectedSeats.size === 0;
@@ -375,7 +371,7 @@
 
         const rowLabel = document.createElement('div');
         rowLabel.className = 'theaters-detail-seat-row-label';
-        rowLabel.textContent = `${row}열`;
+        rowLabel.textContent = row === 1 ? 'A열' : row === 2 ? 'B열' : row === 3 ? 'C열' : `${row}열`;
         rowWrap.appendChild(rowLabel);
 
         const rowSeats = document.createElement('div');
@@ -437,12 +433,12 @@
 
       const rowPrev = document.createElement('button');
       rowPrev.type = 'button';
-      rowPrev.className = 'concert-seat-nav-btn';
+      rowPrev.className = 'theaters-booking-calendar-btn';
       rowPrev.textContent = '열 이전';
 
       const rowNext = document.createElement('button');
       rowNext.type = 'button';
-      rowNext.className = 'concert-seat-nav-btn';
+      rowNext.className = 'theaters-booking-calendar-btn';
       rowNext.textContent = '열 다음';
 
       const pageInfo = document.createElement('div');
@@ -453,12 +449,12 @@
 
       const prevBtn = document.createElement('button');
       prevBtn.type = 'button';
-      prevBtn.className = 'concert-seat-nav-btn';
+      prevBtn.className = 'theaters-booking-calendar-btn';
       prevBtn.textContent = '좌석 이전';
 
       const nextBtn = document.createElement('button');
       nextBtn.type = 'button';
-      nextBtn.className = 'concert-seat-nav-btn';
+      nextBtn.className = 'theaters-booking-calendar-btn';
       nextBtn.textContent = '좌석 다음';
 
       const jump = document.createElement('div');
@@ -466,7 +462,7 @@
       jump.innerHTML = `
         <span style="font-size:13px;color:#555;">좌석번호 이동</span>
         <input type="number" min="1" max="${seatCols}" placeholder="번호 입력">
-        <button type="button" class="concert-seat-nav-btn">이동</button>
+        <button type="button" class="theaters-booking-calendar-btn">이동</button>
       `;
 
       rowPaging.appendChild(rowPrev);
@@ -487,7 +483,7 @@
 
       const rowLabel = document.createElement('div');
       rowLabel.className = 'theaters-detail-seat-row-label';
-      rowLabel.textContent = '1열';
+      rowLabel.textContent = 'A열';
       rowWrap.appendChild(rowLabel);
 
       const rowSeats = document.createElement('div');
@@ -499,7 +495,7 @@
       seatGrid.appendChild(rowWrap);
 
       function getRowLabel(row) {
-        return `${row}열`;
+        return row === 1 ? 'A열' : row === 2 ? 'B열' : row === 3 ? 'C열' : `${row}열`;
       }
 
       function renderRowButtons() {
@@ -720,6 +716,8 @@
               lastResult = { ok: false, message: '중복좌석입니다.' };
             } else if (code === 'SOLD_OUT') {
               lastResult = { ok: false, message: '매진입니다.' };
+            } else if (code === 'SALES_CLOSED') {
+              lastResult = { ok: false, message: '모든 투표가 마감되었습니다.' };
             } else if (code === 'INVALID_SEAT' || code === 'BAD_SEAT_KEY') {
               lastResult = { ok: false, message: '좌석 정보가 올바르지 않습니다. 새로고침 후 다시 시도해주세요.' };
             } else if (code === 'TIMEOUT') {
@@ -745,12 +743,14 @@
           console.error(error);
           const status = error && error.status ? Number(error.status) : 0;
           const errData = error && error.data ? error.data : null;
-          if (status === 400 && errData && errData.code) {
+          if ((status === 400 || status === 409) && errData && errData.code) {
             const code = String(errData.code);
             if (code === 'INVALID_SEAT' || code === 'BAD_SEAT_KEY') {
               lastResult = { ok: false, message: '좌석 정보가 올바르지 않습니다. 새로고침 후 다시 시도해주세요.' };
             } else if (code === 'NO_SEATS') {
               lastResult = { ok: false, message: '좌석을 선택해주세요.' };
+            } else if (code === 'SALES_CLOSED') {
+              lastResult = { ok: false, message: '모든 투표가 마감되었습니다.' };
             } else {
               lastResult = { ok: false, message: '요청값이 올바르지 않습니다.' };
             }

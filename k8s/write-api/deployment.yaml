@@ -5,7 +5,6 @@ metadata:
   labels:
     app: write-api
 spec:
-  # 비동기 예매 폴링(GET /booking/status)이 부하 테스트·동시 접속에서 몰릴 때 분산
   replicas: 1
   selector:
     matchLabels:
@@ -15,33 +14,6 @@ spec:
       labels:
         app: write-api
     spec:
-      priorityClassName: ticketing-priority-write-api
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 80
-              podAffinityTerm:
-                labelSelector:
-                  matchExpressions:
-                    - key: app
-                      operator: In
-                      values:
-                        - worker-svc
-                        - worker-svc-ui
-                topologyKey: kubernetes.io/hostname
-      topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: topology.kubernetes.io/zone
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              app: write-api
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              app: write-api
       # READ_API_PORT / WRITE_API_PORT 가 K8s 자동 주입 변수와 이름 충돌하지 않도록 끔.
       enableServiceLinks: false
       serviceAccountName: sqs-access-sa
@@ -57,6 +29,10 @@ spec:
                 name: ticketing-config
             - secretRef:
                 name: ticketing-secrets
+          env:
+            # 콘서트 FIFO 샤딩(회차 내부 병렬성). configmap 기본값을 명시적으로 고정해 데모/운영 일관성 확보.
+            - name: CONCERT_FIFO_SHARDS
+              value: "64"
           resources:
             requests:
               memory: "128Mi"

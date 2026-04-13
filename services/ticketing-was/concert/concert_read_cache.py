@@ -19,6 +19,8 @@ import threading
 from typing import Any, Dict, List, Optional
 
 from cache.redis_client import redis_client
+from concert.sale_state import mget_sale_states
+from concert.seat_hold import reserved_count, reserved_seats_snapshot
 from config import (
     CONCERT_CACHE_WARMUP_MODE,
     CONCERT_DETAIL_CACHE_TTL_SEC,
@@ -152,22 +154,9 @@ def _fetch_concert_show_rows(concert_id: int) -> List[Dict[str, Any]]:
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT cs.show_id, cs.concert_id, cs.show_date, cs.venue_name, cs.venue_address,
-                    cs.hall_name, cs.seat_rows, cs.seat_cols, cs.total_count,
-                    GREATEST(0, cs.total_count - IFNULL(cb.cnt, 0)) AS remain_count,
-                    cs.price,
-                    CASE
-                      WHEN GREATEST(0, cs.total_count - IFNULL(cb.cnt, 0)) <= 0 THEN 'CLOSED'
-                      WHEN UPPER(COALESCE(cs.status, '')) = 'CLOSED' THEN 'CLOSED'
-                      ELSE 'OPEN'
-                    END AS status
-                FROM concert_shows cs
-                LEFT JOIN (
-                    SELECT show_id, COUNT(*) AS cnt FROM concert_booking_seats
-                    WHERE UPPER(COALESCE(status, '')) = 'ACTIVE'
-                    GROUP BY show_id
-                ) cb ON cb.show_id = cs.show_id
-                WHERE cs.concert_id = %s ORDER BY cs.show_date ASC
+                SELECT show_id, concert_id, show_date, venue_name, venue_address,
+                    hall_name, seat_rows, seat_cols, total_count, remain_count, price, status
+                FROM concert_shows WHERE concert_id = %s ORDER BY show_date ASC
             """, (concert_id,))
             return list(cur.fetchall() or [])
     finally:
@@ -202,22 +191,9 @@ def _fetch_concert_show_row(concert_id: int, show_id: int) -> Optional[Dict[str,
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT cs.show_id, cs.concert_id, cs.show_date, cs.venue_name, cs.venue_address,
-                    cs.hall_name, cs.seat_rows, cs.seat_cols, cs.total_count,
-                    GREATEST(0, cs.total_count - IFNULL(cb.cnt, 0)) AS remain_count,
-                    cs.price,
-                    CASE
-                      WHEN GREATEST(0, cs.total_count - IFNULL(cb.cnt, 0)) <= 0 THEN 'CLOSED'
-                      WHEN UPPER(COALESCE(cs.status, '')) = 'CLOSED' THEN 'CLOSED'
-                      ELSE 'OPEN'
-                    END AS status
-                FROM concert_shows cs
-                LEFT JOIN (
-                    SELECT show_id, COUNT(*) AS cnt FROM concert_booking_seats
-                    WHERE UPPER(COALESCE(status, '')) = 'ACTIVE'
-                    GROUP BY show_id
-                ) cb ON cb.show_id = cs.show_id
-                WHERE cs.concert_id = %s AND cs.show_id = %s
+                SELECT show_id, concert_id, show_date, venue_name, venue_address,
+                    hall_name, seat_rows, seat_cols, total_count, remain_count, price, status
+                FROM concert_shows WHERE concert_id = %s AND show_id = %s
             """, (concert_id, show_id))
             r = cur.fetchone()
         return dict(r) if r else None
@@ -228,6 +204,20 @@ def _fetch_concert_show_row(concert_id: int, show_id: int) -> Optional[Dict[str,
 def _fetch_reserved_seat_keys_by_show(show_ids: List[int]) -> Dict[str, List[str]]:
     if not show_ids:
         return {}
+    # 1) Redis 홀드/확정 좌석이 있으면 그걸 우선 사용(즉시성)
+    out: Dict[str, List[str]] = {}
+    try:
+        for sid in show_ids:
+            keys = reserved_seats_snapshot(int(sid))
+            if keys:
+                out[str(int(sid))] = sorted(keys, key=lambda x: (int(x.split("-")[0]), int(x.split("-")[1])))
+        if len(out) == len(show_ids):
+            return out
+    except Exception:
+        # fall through to DB snapshot
+        pass
+
+    # 2) fallback: DB에서 ACTIVE 좌석을 읽는다(배포 직후 Redis 미사용/미스 등)
     conn = get_db_read_connection()
     try:
         placeholders = ",".join(["%s"] * len(show_ids))
@@ -239,7 +229,7 @@ def _fetch_reserved_seat_keys_by_show(show_ids: List[int]) -> Dict[str, List[str
                 tuple(show_ids),
             )
             rows = cur.fetchall() or []
-        result: Dict[str, List[str]] = {}
+        result: Dict[str, List[str]] = dict(out)
         for r in rows:
             sid = str(int(r["show_id"]))
             key = f"{int(r['seat_row_no'])}-{int(r['seat_col_no'])}"
@@ -251,6 +241,11 @@ def _fetch_reserved_seat_keys_by_show(show_ids: List[int]) -> Dict[str, List[str
 
 def _show_payload_from_row(r: Dict[str, Any], reserved_keys: List[str]) -> Dict[str, Any]:
     sid = int(r["show_id"])
+    total = int(r.get("total_count") or 0)
+    hold = reserved_count(sid)
+    # write-path에서 remain_count를 강하게 갱신하지 않는 대신,
+    # 조회 스냅샷에서는 예약된 ACTIVE 좌석 수로 remain을 유도한다.
+    remain = max(0, total - len(reserved_keys))
     return {
         "show_id": sid,
         "concert_id": int(r["concert_id"]),
@@ -260,10 +255,12 @@ def _show_payload_from_row(r: Dict[str, Any], reserved_keys: List[str]) -> Dict[
         "hall_name": r.get("hall_name"),
         "seat_rows": int(r.get("seat_rows") or 0),
         "seat_cols": int(r.get("seat_cols") or 0),
-        "total_count": int(r.get("total_count") or 0),
-        "remain_count": int(r.get("remain_count") or 0),
+        "total_count": total,
+        # 점유(홀드) 좌석 수 — DB 확정과 별개로 UI에 즉시 반영되는 수량
+        "hold_count": int(hold),
+        "remain_count": remain,
         "price": int(r.get("price") or 0),
-        "status": r.get("status"),
+        "status": "CLOSED" if remain <= 0 else (r.get("status") or "OPEN"),
         "reserved_seats": reserved_keys,
     }
 
@@ -392,6 +389,7 @@ def get_concert_bootstrap_cached_or_load(concert_id: int) -> Optional[Dict[str, 
     show_rows = _get_show_rows_for_bootstrap(concert_id)
     if not show_rows:
         return {"concert": concert, "shows": []}
+    sale_map = mget_sale_states([int(r["show_id"]) for r in show_rows])
     keys = [_concert_show_snapshot_key(int(r["show_id"])) for r in show_rows]
     raws = _redis_mget_values(keys)
     slot: List[Optional[Dict[str, Any]]] = [None] * len(show_rows)
@@ -399,7 +397,11 @@ def get_concert_bootstrap_cached_or_load(concert_id: int) -> Optional[Dict[str, 
     for i, (row, raw, key) in enumerate(zip(show_rows, raws, keys)):
         if raw:
             try:
-                slot[i] = json.loads(raw)
+                snap = json.loads(raw)
+                if isinstance(snap, dict):
+                    sid = str(int(row["show_id"]))
+                    snap["sale"] = sale_map.get(sid, {"status": "OPEN", "close_at_epoch_ms": None})
+                slot[i] = snap
                 continue
             except json.JSONDecodeError:
                 redis_client.delete(key)
@@ -426,6 +428,8 @@ def get_concert_bootstrap_for_show(concert_id: int, show_id: int) -> Optional[Di
     if not concert:
         return None
     snap = get_or_load_concert_show_snapshot(row)
+    snap = dict(snap) if isinstance(snap, dict) else {"show_id": int(show_id)}
+    snap["sale"] = mget_sale_states([int(show_id)]).get(str(int(show_id)), {"status": "OPEN", "close_at_epoch_ms": None})
     return {"concert": concert, "shows": [snap]}
 
 

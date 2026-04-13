@@ -25,10 +25,10 @@ resource "helm_release" "keda" {
   create_namespace = true
   version          = "2.15.2"
 
-  # Avoid terraform destroy hanging on helm uninstall.
-  # We still prefer a clean uninstall, but we don't want the whole destroy to block indefinitely.
-  wait    = false
-  timeout = 180
+  wait            = true
+  timeout         = 180
+  atomic          = true
+  cleanup_on_fail = true
 
   values = [
     yamlencode({
@@ -40,5 +40,43 @@ resource "helm_release" "keda" {
     })
   ]
 
-  depends_on = [module.eks]
+  # KEDA 설치 중 생성되는 Service 등이 ALB Controller webhook을 호출할 수 있어,
+  # 컨트롤러(webhook endpoints)가 준비되기 전에 실행되면 실패할 수 있다.
+  depends_on = [module.eks, null_resource.install_aws_load_balancer_controller]
+}
+
+resource "null_resource" "keda_cleanup_on_destroy" {
+  count = var.install_keda ? 1 : 0
+
+  triggers = {
+    cluster_name = module.eks.cluster_name
+    aws_region   = var.aws_region
+    # 스크립트 변경 시 재실행
+    script_md5   = filemd5("${path.module}/scripts/keda_cleanup_on_destroy.sh")
+  }
+
+  depends_on = [
+    data.external.terraform_host_exec_clis,
+    module.eks,
+    null_resource.install_aws_load_balancer_controller,
+    helm_release.keda,
+  ]
+
+  provisioner "local-exec" {
+    interpreter = ["bash", "-c"]
+    when        = destroy
+    environment = {
+      CLUSTER_NAME = self.triggers.cluster_name
+      AWS_REGION   = self.triggers.aws_region
+      KEDA_NAMESPACE     = "keda"
+      KEDA_RELEASE_NAME  = "keda"
+      # destroy가 길어지지 않게 빠르게 정리(필요 시 finalizer 조기 제거)
+      KEDA_CLEANUP_WAIT_SEC = "120"
+      # 1이면 namespace finalizers 강제 제거(최후 수단). 기본 0.
+      KEDA_FORCE_REMOVE_FINALIZERS = "1"
+      # Terminating이 지속되면 N초 뒤 finalizer 제거 시도
+      KEDA_FORCE_FINALIZERS_AFTER_SEC = "20"
+    }
+    command = "tr -d '\\r' < \"${path.module}/scripts/keda_cleanup_on_destroy.sh\" | bash"
+  }
 }

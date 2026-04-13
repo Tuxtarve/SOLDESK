@@ -163,7 +163,10 @@
     btn.type = 'button';
     btn.className = 'concert-booking-card';
 
-    const isOpen = String(show.status || '').toUpperCase() === 'OPEN';
+    const sale = show && show.sale ? show.sale : null;
+    const saleStatus = sale && sale.status ? String(sale.status).toUpperCase() : 'OPEN';
+    const isSaleOpen = saleStatus === 'OPEN';
+    const isOpen = isSaleOpen && String(show.status || '').toUpperCase() === 'OPEN';
     const isSoldOut = toInt(show.remain_count) <= 0;
     const disabled = !isOpen || isSoldOut;
     if (disabled) {
@@ -171,13 +174,17 @@
       btn.classList.add('is-disabled');
     }
 
+    const remainText =
+      !isSaleOpen ? '모든 투표가 마감되었습니다' :
+      (isSoldOut ? '매진' : `잔여좌석 ${escapeHtml(String(show.remain_count))} / ${escapeHtml(String(show.total_count))}`);
+
     btn.innerHTML = `
       <div class="concert-booking-time">${escapeHtml(formatRangeLabel(show, concert))}</div>
       <div class="concert-booking-meta">
         <span>${escapeHtml(show.hall_name || '홀')}</span>
         <span>${escapeHtml(show.venue_name || '')}</span>
       </div>
-      <div class="concert-booking-remain">잔여좌석 ${escapeHtml(String(show.remain_count))} / ${escapeHtml(String(show.total_count))}</div>
+      <div class="concert-booking-remain">${remainText}</div>
     `;
 
     if (!disabled) {
@@ -195,6 +202,11 @@
   function renderPage(mount, state) {
     const { concert, shows } = state;
     const title = escapeHtml(concert.title || '공연');
+    const anyClosed = shows.some((s) => {
+      const sale = s && s.sale ? s.sale : null;
+      const st = sale && sale.status ? String(sale.status).toUpperCase() : 'OPEN';
+      return st !== 'OPEN';
+    });
 
     mount.innerHTML = `
       <div class="concert-booking-page">
@@ -203,6 +215,7 @@
           <div style="margin-top:14px;">
             <button type="button" class="concert-booking-back" id="concert-booking-back">← 공연 상세</button>
             <p class="concert-booking-subhead">회차를 선택한 뒤 좌석을 고르세요.</p>
+            ${anyClosed ? '<div class="concert-booking-empty" style="margin-top:10px;">모든 투표가 마감되었습니다.</div>' : ''}
             <div class="concert-booking-card-list" id="concert-booking-show-list"></div>
           </div>
         </div>

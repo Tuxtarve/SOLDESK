@@ -18,7 +18,13 @@ kubectl -n ticketing rollout restart deploy/write-api
 kubectl -n ticketing exec -it tools-once -- sh -lc '
 cd /work/ticketing-db/terraform &&
 WRITE_API_BASE_URL="http://write-api.ticketing.svc.cluster.local:5001" \
-python3 ../scripts/sqs_load_real_concert.py -n 10000 --spread-users 10000 --via-was'
+python3 ../scripts/sqs_load_real_concert.py -n 30000 --spread-users 30000 --via-was'
+
+
+kubectl -n ticketing exec -it tools-once -- sh -lc '
+cd /work/ticketing-db/terraform &&
+WRITE_API_BASE_URL="http://write-api.ticketing.svc.cluster.local:5001" \
+python3 ../scripts/sqs_load_real_concert2.py -n 30000 --spread-users 30000 --via-was'
 
 
 

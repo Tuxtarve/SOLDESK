@@ -1,12 +1,8 @@
 """
 AWS SQS FIFO + Amazon ElastiCache 예매 쓰기 (write-api ↔ worker-svc, 동일 VPC)
 
-배포: write-api 는 `SQS_QUEUE_INTERACTIVE_URL`(ticketing-reservation-ui.fifo)를 `SQS_QUEUE_URL`로 주입.
-      부하 스크립트·bulk 워커는 `SQS_QUEUE_URL`(ticketing-reservation.fifo) — 큐 분리로 GUI 적체와 독립.
-
 1) 커밋(POST, write-api)
    - `booking_ref`(UUID) 발급 후 메시지 본문에 넣어 **SQS FIFO** 로 전송 (완전 관리형, 리전 내부).
-     **예매 1건 = SQS 메시지 1개** (한 메시지 Body에 여러 예매를 묶지 않음 → 워커 병렬 소비 가능).
    - MessageGroupId = schedule_id-user_id / show_id-user_id → 유저별 순서·타 유저와는 병렬(좌석은 워커 DB 락).
    - 전송 성공 직후 **ElastiCache 논리 DB `ELASTICACHE_LOGICAL_DB_BOOKING`** 에 `booking:queued:{ref}` (TTL).
 
@@ -37,14 +33,11 @@ from config import (
     AWS_REGION,
     BOOKING_QUEUED_TTL_SEC,
     BOOKING_STATE_ENABLED,
-    BOOKING_QUEUE_MODE,
-    SQS_MESSAGE_GROUP_SHARDS,
     SQS_BOTO_MAX_ATTEMPTS,
     SQS_BOTO_RETRY_MODE,
     SQS_CONNECT_TIMEOUT_SEC,
     SQS_ENABLED,
     SQS_QUEUE_URL,
-    SQS_QUEUE_INTERACTIVE_URL,
     SQS_READ_TIMEOUT_SEC,
 )
 
@@ -62,24 +55,11 @@ def _boto_config() -> Config:
     )
 
 
-def _any_queue_url() -> str:
-    return (SQS_QUEUE_URL or "").strip() or (SQS_QUEUE_INTERACTIVE_URL or "").strip()
-
-
 sqs = (
     boto3.client("sqs", region_name=AWS_REGION, config=_boto_config())
-    if (SQS_ENABLED and _any_queue_url())
+    if (SQS_ENABLED and SQS_QUEUE_URL)
     else None
 )
-
-
-def _resolve_target_queue_url(*, explicit: str | None = None) -> str:
-    if explicit is not None and str(explicit).strip():
-        return str(explicit).strip()
-    if BOOKING_QUEUE_MODE == "bulk":
-        return (SQS_QUEUE_URL or "").strip()
-    # default ui
-    return (SQS_QUEUE_INTERACTIVE_URL or "").strip() or (SQS_QUEUE_URL or "").strip()
 
 
 def _booking_result_key(booking_ref: str) -> str:
@@ -98,26 +78,6 @@ def _valid_booking_ref(booking_ref: str) -> bool:
         return False
 
 
-def _sharded_group_id(base_group_id: str, booking_ref: str) -> str:
-    """
-    FIFO 병렬도 확보를 위한 MessageGroupId 샤딩.
-    - shards=1: 기존과 동일(유저별 순차 보장)
-    - shards>1: base_group_id 내에서 shard로 분산(순서 보장은 shard 내에서만 유지)
-    """
-    try:
-        shards = int(SQS_MESSAGE_GROUP_SHARDS)
-    except Exception:
-        shards = 1
-    shards = max(1, shards)
-    if shards <= 1:
-        return str(base_group_id)
-
-    ref = str(booking_ref or "").strip()
-    h = hashlib.sha256(ref.encode()).hexdigest()
-    shard = int(h[:8], 16) % shards
-    return f"{base_group_id}#s{shard}"
-
-
 def _mark_booking_queued(booking_ref: str) -> None:
     if not BOOKING_STATE_ENABLED:
         return
@@ -133,7 +93,13 @@ def _mark_booking_queued(booking_ref: str) -> None:
         log.exception("booking queued 표식 실패 ref=%s (SQS 메시지는 이미 전송됨)", booking_ref)
 
 
-def send_booking_message(booking_type: str, group_id: str, payload: dict, *, queue_url: str | None = None) -> str:
+def send_booking_message(
+    booking_type: str,
+    group_id: str,
+    payload: dict,
+    *,
+    booking_ref: str | None = None,
+) -> str:
     """
     SQS FIFO 큐에 예매 메시지 전송.
     - booking_type: "theater" 또는 "concert"
@@ -141,7 +107,9 @@ def send_booking_message(booking_type: str, group_id: str, payload: dict, *, que
     - payload: 예매 요청 데이터
     Returns: booking_ref (결과 조회용 UUID)
     """
-    booking_ref = str(uuid.uuid4())
+    booking_ref = str(booking_ref).strip() if booking_ref else str(uuid.uuid4())
+    if not _valid_booking_ref(booking_ref):
+        booking_ref = str(uuid.uuid4())
 
     body = {
         "booking_type": booking_type,
@@ -154,28 +122,16 @@ def send_booking_message(booking_type: str, group_id: str, payload: dict, *, que
 
     if not SQS_ENABLED:
         raise RuntimeError("SQS is disabled (SQS_ENABLED=false). No sync DB fallback is configured.")
-    if not sqs:
-        raise RuntimeError("SQS is enabled but SQS client is not configured (missing queue URL)")
+    if not sqs or not SQS_QUEUE_URL:
+        raise RuntimeError("SQS_QUEUE_URL is required when SQS is enabled")
 
-    target = _resolve_target_queue_url(explicit=queue_url)
-    if not target:
-        raise RuntimeError("Target SQS queue URL is empty. Set SQS_QUEUE_URL and/or SQS_QUEUE_INTERACTIVE_URL.")
-
-    effective_group_id = _sharded_group_id(str(group_id), booking_ref)
     sqs.send_message(
-        QueueUrl=target,
-        MessageGroupId=effective_group_id,
+        QueueUrl=SQS_QUEUE_URL,
+        MessageGroupId=str(group_id),
         MessageDeduplicationId=dedup_id,
         MessageBody=raw,
     )
-    log.info(
-        "SQS 전송: mode=%s queue=%s type=%s group=%s ref=%s",
-        BOOKING_QUEUE_MODE,
-        "interactive" if target == (SQS_QUEUE_INTERACTIVE_URL or "").strip() else "bulk",
-        booking_type,
-        effective_group_id,
-        booking_ref,
-    )
+    log.info("SQS 전송: type=%s, group=%s, ref=%s", booking_type, group_id, booking_ref)
     _mark_booking_queued(booking_ref)
     return booking_ref
 

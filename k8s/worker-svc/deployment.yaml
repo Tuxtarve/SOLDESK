@@ -5,8 +5,8 @@ metadata:
   labels:
     app: worker-svc
 spec:
-  # SQS FIFO bulk 큐. KEDA ScaledObject(worker-svc-sqs)가 레플리카를 조정한다.
-  replicas: 0
+  # SQS FIFO는 여러 consumer가 서로 다른 MessageGroupId를 병렬 소비 가능. 부하 시 2~5로 확장 검토.
+  replicas: 1
   selector:
     matchLabels:
       app: worker-svc
@@ -15,33 +15,8 @@ spec:
       labels:
         app: worker-svc
     spec:
-      priorityClassName: ticketing-priority-worker-bulk
-      affinity:
-        podAntiAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              podAffinityTerm:
-                labelSelector:
-                  matchExpressions:
-                    - key: app
-                      operator: In
-                      values:
-                        - read-api
-                        - write-api
-                topologyKey: kubernetes.io/hostname
-      topologySpreadConstraints:
-        - maxSkew: 1
-          topologyKey: topology.kubernetes.io/zone
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              app: worker-svc
-        - maxSkew: 1
-          topologyKey: kubernetes.io/hostname
-          whenUnsatisfiable: ScheduleAnyway
-          labelSelector:
-            matchLabels:
-              app: worker-svc
+      # K8s ServiceLinks가 *_PORT=tcp://... 환경변수를 주입하면 앱의 *_PORT 설정과 충돌하는 경우가 있어 비활성화.
+      enableServiceLinks: false
       serviceAccountName: sqs-access-sa
       containers:
         - name: worker-svc
@@ -55,14 +30,17 @@ spec:
             - secretRef:
                 name: ticketing-secrets
           env:
-            # RDS 동시 커넥션·락 완화(파드당). 배치 스레드보다 작으면 대기.
+            # 데모(버스트 처리): 파드당 처리량을 키워 scale-out 효과를 선명하게
+            - name: WORKER_SQS_BATCH_CONCURRENCY
+              value: "20"
+            - name: WORKER_SQS_POLLERS
+              value: "2"
             - name: WORKER_DB_MAX_CONCURRENT
-              value: "5"
-          # requests 는 낮게: 평시 노드에 여유(도구 Pod·버스트)를 남김. 피크는 limits·레플리카로 확장.
+              value: "40"
           resources:
             requests:
-              memory: "96Mi"
-              cpu: "50m"
+              memory: "128Mi"
+              cpu: "100m"
             limits:
               memory: "256Mi"
               cpu: "300m"

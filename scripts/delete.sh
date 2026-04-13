@@ -1,5 +1,18 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
+
+# When kubectl cannot reach API server (auth/network), it may appear to "hang".
+# Force request-level timeouts so the script fails fast with a useful error.
+KUBECTL_REQUEST_TIMEOUT="${KUBECTL_REQUEST_TIMEOUT:-20s}"
+POD_READY_TIMEOUT="${POD_READY_TIMEOUT:-180s}"
+
+_on_err() {
+  local exit_code=$?
+  echo "ERROR: delete.sh failed (exit=$exit_code) at line=$LINENO" >&2
+  echo "ERROR: last_command=$BASH_COMMAND" >&2
+  exit "$exit_code"
+}
+trap _on_err ERR
 
 # Deletes ONLY rows created by:
 #   python3 ../scripts/sqs_load_real_concert.py -n 30000 --spread-users 30000 --via-was ...
@@ -27,12 +40,20 @@ WIPE_LOADTEST_USERS="${WIPE_LOADTEST_USERS:-false}"
 # mysql client pod (ephemeral)
 MYSQL_POD="${MYSQL_POD:-db-loadtest-clean-$(date +%s)}"
 MYSQL_IMAGE="${MYSQL_IMAGE:-mysql:8}"
+# How to run mysql client:
+# - k8s-pod (default): create a temporary mysql client pod and exec into it
+# - local: run local `mysql` binary directly (no temp pod; avoids pod Ready timeouts)
+MYSQL_CLIENT_MODE="${MYSQL_CLIENT_MODE:-k8s-pod}"
 
 _need() {
   command -v "$1" >/dev/null 2>&1 || { echo "ERROR: missing command: $1" >&2; exit 127; }
 }
 
 _need kubectl
+
+_k() {
+  kubectl --request-timeout="$KUBECTL_REQUEST_TIMEOUT" "$@"
+}
 
 echo "=== loadtest cleanup (concert via-was) ==="
 echo "namespace=$NS"
@@ -46,12 +67,37 @@ else
 fi
 echo "wipe_concert_tables=$WIPE_CONCERT_TABLES"
 echo "wipe_loadtest_users=$WIPE_LOADTEST_USERS"
+echo "mysql_client_mode=$MYSQL_CLIENT_MODE"
 
-DB_HOST="$(kubectl -n "$NS" get secret ticketing-secrets -o jsonpath='{.data.DB_WRITER_HOST}' | base64 -d | tr -d '\r\n')"
-DB_USER="$(kubectl -n "$NS" get secret ticketing-secrets -o jsonpath='{.data.DB_USER}' | base64 -d | tr -d '\r\n')"
-DB_PASSWORD="$(kubectl -n "$NS" get secret ticketing-secrets -o jsonpath='{.data.DB_PASSWORD}' | base64 -d | tr -d '\r\n')"
-DB_NAME="$(kubectl -n "$NS" get configmap ticketing-config -o jsonpath='{.data.DB_NAME}' | tr -d '\r\n')"
-DB_PORT="$(kubectl -n "$NS" get configmap ticketing-config -o jsonpath='{.data.DB_PORT}' | tr -d '\r\n')"
+if [[ "$MYSQL_CLIENT_MODE" == "local" ]]; then
+  _need mysql
+  : "${DB_HOST:?DB_HOST required when MYSQL_CLIENT_MODE=local}"
+  : "${DB_USER:?DB_USER required when MYSQL_CLIENT_MODE=local}"
+  : "${DB_PASSWORD:?DB_PASSWORD required when MYSQL_CLIENT_MODE=local}"
+  : "${DB_NAME:?DB_NAME required when MYSQL_CLIENT_MODE=local}"
+  : "${DB_PORT:?DB_PORT required when MYSQL_CLIENT_MODE=local}"
+  # Redis invalidation still uses cluster lookup unless explicitly provided.
+  REDIS_HOST="${REDIS_HOST:-}"
+else
+  DB_HOST="$(_k -n "$NS" get secret ticketing-secrets -o jsonpath='{.data.DB_WRITER_HOST}' | base64 -d | tr -d '\r\n')"
+  DB_USER="$(_k -n "$NS" get secret ticketing-secrets -o jsonpath='{.data.DB_USER}' | base64 -d | tr -d '\r\n')"
+  DB_PASSWORD="$(_k -n "$NS" get secret ticketing-secrets -o jsonpath='{.data.DB_PASSWORD}' | base64 -d | tr -d '\r\n')"
+  DB_NAME="$(_k -n "$NS" get configmap ticketing-config -o jsonpath='{.data.DB_NAME}' | tr -d '\r\n')"
+  DB_PORT="$(_k -n "$NS" get configmap ticketing-config -o jsonpath='{.data.DB_PORT}' | tr -d '\r\n')"
+  REDIS_HOST="$(_k -n "$NS" get secret ticketing-secrets -o jsonpath='{.data.REDIS_HOST}' 2>/dev/null | base64 -d | tr -d '\r\n' || true)"
+fi
+if [[ -z "$REDIS_HOST" ]]; then
+  if [[ "$MYSQL_CLIENT_MODE" != "local" ]]; then
+    REDIS_HOST="$(_k -n "$NS" get secret ticketing-secrets -o jsonpath='{.data.ELASTICACHE_PRIMARY_ENDPOINT}' 2>/dev/null | base64 -d | tr -d '\r\n' || true)"
+  fi
+fi
+if [[ "$MYSQL_CLIENT_MODE" == "local" ]]; then
+  REDIS_PORT="${REDIS_PORT:-}"
+  REDIS_DB_CACHE="${REDIS_DB_CACHE:-}"
+else
+  REDIS_PORT="$(_k -n "$NS" get configmap ticketing-config -o jsonpath='{.data.REDIS_PORT}' | tr -d '\r\n')"
+  REDIS_DB_CACHE="$(_k -n "$NS" get configmap ticketing-config -o jsonpath='{.data.ELASTICACHE_LOGICAL_DB_CACHE}' | tr -d '\r\n')"
+fi
 
 if [[ -z "${DB_HOST}" || -z "${DB_USER}" || -z "${DB_NAME}" || -z "${DB_PORT}" ]]; then
   echo "ERROR: failed to load DB settings from $NS/{ticketing-secrets,ticketing-config}" >&2
@@ -59,16 +105,27 @@ if [[ -z "${DB_HOST}" || -z "${DB_USER}" || -z "${DB_NAME}" || -z "${DB_PORT}" ]
 fi
 
 cleanup() {
-  kubectl -n "$NS" delete pod "$MYSQL_POD" --ignore-not-found >/dev/null 2>&1 || true
+  _k -n "$NS" delete pod "$MYSQL_POD" --ignore-not-found >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
-kubectl -n "$NS" run "$MYSQL_POD" \
-  --image="$MYSQL_IMAGE" \
-  --restart=Never \
-  --command -- sh -lc "sleep 3600" >/dev/null
+if [[ "$MYSQL_CLIENT_MODE" == "k8s-pod" ]]; then
+  _k -n "$NS" run "$MYSQL_POD" \
+    --image="$MYSQL_IMAGE" \
+    --restart=Never \
+    --command -- sh -lc "sleep 3600" >/dev/null
 
-kubectl -n "$NS" wait --for=condition=Ready pod/"$MYSQL_POD" --timeout=180s >/dev/null
+  if ! _k -n "$NS" wait --for=condition=Ready pod/"$MYSQL_POD" --timeout="$POD_READY_TIMEOUT" >/dev/null; then
+    echo "ERROR: mysql client pod not Ready: $MYSQL_POD (timeout=$POD_READY_TIMEOUT)" >&2
+    echo "--- pod status ---" >&2
+    _k -n "$NS" get pod "$MYSQL_POD" -o wide >&2 || true
+    echo "--- pod describe (tail) ---" >&2
+    _k -n "$NS" describe pod "$MYSQL_POD" 2>&1 | tail -n 80 >&2 || true
+    echo "--- namespace events (tail) ---" >&2
+    _k -n "$NS" get events --sort-by=.lastTimestamp 2>&1 | tail -n 80 >&2 || true
+    exit 1
+  fi
+fi
 
 _sql_escape_squote() {
   # escape for SQL single-quoted strings:  '  ->  ''
@@ -97,21 +154,15 @@ SET @do_wipe_users := (LOWER(COALESCE(@wipe_users, 'false')) IN ('1','true','yes
 
 SELECT @do_wipe AS will_wipe_concert_tables, @do_wipe_users AS will_wipe_loadtest_users;
 
--- If wiping, do it and stop further deletes.
--- We keep it in a single mysql -e run for speed.
-DO
-  IF @do_wipe THEN
-    SET FOREIGN_KEY_CHECKS=0;
-    TRUNCATE TABLE concert_payment;
-    TRUNCATE TABLE concert_booking_seats;
-    TRUNCATE TABLE concert_booking;
-    SET FOREIGN_KEY_CHECKS=1;
-    IF @do_wipe_users THEN
-      DELETE FROM users
-      WHERE user_id BETWEEN @uid_min AND @uid_max
-        AND name LIKE CONCAT(@user_prefix, '%');
-    END IF;
-  END IF;
+-- Wipe mode: MySQL IF/THEN is not allowed outside stored programs.
+-- Use WHERE @do_wipe to conditionally delete all rows (fast enough for test env).
+DELETE FROM concert_booking WHERE @do_wipe;
+DELETE FROM concert_booking_seats WHERE @do_wipe;
+DELETE FROM concert_payment WHERE @do_wipe;
+DELETE FROM users
+WHERE @do_wipe_users
+  AND user_id BETWEEN @uid_min AND @uid_max
+  AND name LIKE CONCAT(@user_prefix, '%');
 
 -- If wipe ran, show post counts and exit early.
 SELECT COUNT(*) AS concert_booking_rows_total FROM concert_booking;
@@ -119,7 +170,7 @@ SELECT COUNT(*) AS concert_booking_seats_rows_total FROM concert_booking_seats;
 SELECT COUNT(*) AS concert_payment_rows_total FROM concert_payment;
 
 -- Find target show_id (or use explicit one).
-SET @target_show_id := IFNULL(@explicit_show_id, (
+SET @target_show_id := IF(@do_wipe, NULL, IFNULL(@explicit_show_id, (
   SELECT t.show_id FROM (
     SELECT cb.show_id AS show_id, COUNT(*) AS bookings
     FROM concert_booking cb
@@ -133,9 +184,13 @@ SET @target_show_id := IFNULL(@explicit_show_id, (
     ORDER BY bookings DESC
     LIMIT 1
   ) t
-));
+)));
 
 SELECT @target_show_id AS target_show_id;
+SELECT concert_id INTO @target_concert_id
+FROM concert_shows
+WHERE show_id = @target_show_id;
+SELECT @target_concert_id AS target_concert_id;
 
 -- Materialize only the booking_ids we intend to delete (avoid repeating joins).
 DROP TEMPORARY TABLE IF EXISTS _loadtest_booking_ids;
@@ -174,16 +229,61 @@ DELETE cb
 FROM concert_booking cb
 JOIN _loadtest_booking_ids t ON t.booking_id = cb.booking_id;
 
+-- Sync remain_count after cleanup (cache reads this column)
+UPDATE concert_shows cs
+SET remain_count = GREATEST(0, cs.total_count - IFNULL((
+  SELECT COUNT(*) FROM concert_booking_seats cbs
+  WHERE cbs.show_id = cs.show_id AND UPPER(COALESCE(cbs.status, '')) = 'ACTIVE'
+), 0))
+WHERE (@do_wipe AND 1=1) OR cs.show_id = @target_show_id;
+
+SELECT show_id, total_count, remain_count
+FROM concert_shows
+WHERE show_id = @target_show_id;
+
 -- Counts after delete
 SELECT COUNT(*) AS concert_booking_rows_after
 FROM concert_booking cb
 JOIN _loadtest_booking_ids t ON t.booking_id = cb.booking_id;
+
+-- For bash parsing (tsv): __IDS__  <show_id>  <concert_id>
+SELECT '__IDS__' AS tag, @target_show_id AS show_id, @target_concert_id AS concert_id;
 EOF
 )"
 
 echo "Running cleanup SQL via mysql client pod: $MYSQL_POD"
-kubectl -n "$NS" exec "$MYSQL_POD" -- sh -lc \
-  "MYSQL_PWD=\"$DB_PASSWORD\" mysql -h \"$DB_HOST\" -P \"$DB_PORT\" -u \"$DB_USER\" --protocol=tcp --default-character-set=utf8mb4 -D \"$DB_NAME\" -e \"$SQL\""
+if [[ "$MYSQL_CLIENT_MODE" == "local" ]]; then
+  echo "Running cleanup SQL via local mysql client"
+  OUT="$(MYSQL_PWD="$DB_PASSWORD" mysql -h "$DB_HOST" -P "$DB_PORT" -u "$DB_USER" --protocol=tcp --default-character-set=utf8mb4 -D "$DB_NAME" -N -B -e "$SQL")"
+else
+  echo "Running cleanup SQL via mysql client pod: $MYSQL_POD"
+  OUT="$(_k -n "$NS" exec "$MYSQL_POD" -- sh -lc \
+    "MYSQL_PWD=\"$DB_PASSWORD\" mysql -h \"$DB_HOST\" -P \"$DB_PORT\" -u \"$DB_USER\" --protocol=tcp --default-character-set=utf8mb4 -D \"$DB_NAME\" -N -B -e \"$SQL\"")"
+fi
+printf '%s\n' "$OUT"
+
+IDS_LINE="$(printf '%s\n' "$OUT" | grep -F '__IDS__' | tail -n 1 || true)"
+TARGET_SHOW_ID=""
+TARGET_CONCERT_ID=""
+if [[ -n "$IDS_LINE" ]]; then
+  IFS=$'\t' read -r _tag TARGET_SHOW_ID TARGET_CONCERT_ID <<< "$IDS_LINE" || true
+fi
+
+if [[ -n "$REDIS_HOST" && -n "$TARGET_SHOW_ID" && -n "$TARGET_CONCERT_ID" ]]; then
+  echo "Invalidating Redis read-cache keys (show_id=$TARGET_SHOW_ID concert_id=$TARGET_CONCERT_ID db=$REDIS_DB_CACHE)"
+  REDIS_POD="redis-loadtest-clean-$(date +%s)"
+  _k -n "$NS" delete pod "$REDIS_POD" --ignore-not-found >/dev/null 2>&1 || true
+  _k -n "$NS" run "$REDIS_POD" --image="redis:7-alpine" --restart=Never --command -- sh -lc "sleep 3600" >/dev/null
+  _k -n "$NS" wait --for=condition=Ready pod/"$REDIS_POD" --timeout="$POD_READY_TIMEOUT" >/dev/null
+  _k -n "$NS" exec "$REDIS_POD" -- sh -lc \
+    "redis-cli -h \"$REDIS_HOST\" -p \"$REDIS_PORT\" -n \"${REDIS_DB_CACHE:-0}\" DEL \
+      \"concert:show:${TARGET_SHOW_ID}:read:v2\" \
+      \"concert:shows_meta:${TARGET_CONCERT_ID}:read:v1\" \
+      \"concert:bootstrap:${TARGET_CONCERT_ID}:read:v1\" >/dev/null || true"
+  _k -n "$NS" delete pod "$REDIS_POD" --ignore-not-found >/dev/null 2>&1 || true
+else
+  echo "Skip Redis invalidation (missing REDIS_HOST or target ids)."
+fi
 
 echo "=== done ==="
 
