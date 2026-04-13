@@ -198,6 +198,18 @@ cleanup_vpc() {
 # ── 메인 ─────────────────────────────────────────────────────────
 VPC_ID=$(get_vpc_id)
 
+# tfvars의 alb_listener_arn / frontend_callback_domain을 미리 빈값으로 reset.
+# main.tf의 data "aws_lb_listener" 가 옛 ARN을 lookup하다 NotFound로 destroy
+# plan을 fail시키는 데드락 방지. setup-all.sh가 다음 apply 후반부에 새 ARN을
+# 자동으로 다시 박는다. -var override만으로는 retry loop / cached state 등의
+# 경로에서 작동 안 할 수 있어 tfvars 자체를 사전 reset.
+TFVARS="$ROOT/terraform/terraform.tfvars"
+if [ -f "$TFVARS" ]; then
+  sed -i 's|^alb_listener_arn.*|alb_listener_arn = ""|' "$TFVARS" 2>/dev/null || true
+  sed -i 's|^frontend_callback_domain.*|frontend_callback_domain = ""|' "$TFVARS" 2>/dev/null || true
+  echo "tfvars: alb_listener_arn / frontend_callback_domain pre-reset"
+fi
+
 # 1차 사전 정리
 cleanup_vpc "$VPC_ID"
 
