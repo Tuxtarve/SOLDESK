@@ -108,14 +108,18 @@ resource "aws_apigatewayv2_route" "api_authenticated" {
   authorizer_id      = aws_apigatewayv2_authorizer.cognito.id
 }
 
-# ── 인증 우회 routes (헬스체크, 메트릭) ────────────────────────────
+# ── 인증 우회 routes (헬스체크, 메트릭, 공개 조회) ─────────────────
 # Prometheus가 외부에서 scrape할 수 있도록, /health도 ALB healthcheck용
+# 이벤트/좌석 조회는 공개 정보이므로 비로그인도 둘러볼 수 있게 인증 면제
 resource "aws_apigatewayv2_route" "api_public" {
   for_each = var.alb_listener_arn != "" ? toset([
     "GET /health",
     "GET /event-metrics",
     "GET /reserv-metrics",
     "GET /worker-metrics",
+    "GET /api/events",
+    "GET /api/events/{event_id}",
+    "GET /api/events/{event_id}/seats",
   ]) : toset([])
 
   api_id    = aws_apigatewayv2_api.main.id
