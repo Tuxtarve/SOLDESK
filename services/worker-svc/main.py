@@ -37,7 +37,7 @@ running = True
 async def process_message(msg: dict):
     import time
     start = time.time()
-    conn = None
+    receipt = msg.get("ReceiptHandle")
 
     try:
         body = json.loads(msg["Body"])
@@ -47,68 +47,67 @@ async def process_message(msg: dict):
         seat_ids = body["seatIds"]
         expires_at = body["expiresAt"]
         lock_keys = body.get("lockKeys", [])
-        # 하위 호환: 이전 형식(lockKey)도 지원
         if not lock_keys and "lockKey" in body:
             lock_keys = [body["lockKey"]]
 
         log.info("메시지 처리 시작: reservationId=%s", reservation_id)
 
-        conn = await writer_pool.acquire()
-        await conn.begin()
-        cur = await conn.cursor()
+        # 컨텍스트 매니저로 acquire/release 자동화 — 이전 분기 누락으로
+        # seat_conflict에서 connection leak이 발생해 풀이 비고 5번째 처리부터
+        # 영원히 acquire 대기하던 버그 해소
+        async with writer_pool.acquire() as conn:
+            await conn.begin()
+            try:
+                async with conn.cursor() as cur:
+                    placeholders = ",".join(["%s"] * len(seat_ids))
+                    await cur.execute(
+                        f"SELECT id, price FROM seats WHERE id IN ({placeholders}) AND status = 'AVAILABLE' FOR UPDATE",
+                        seat_ids,
+                    )
+                    seat_rows = await cur.fetchall()
 
-        placeholders = ",".join(["%s"] * len(seat_ids))
-        await cur.execute(
-            f"SELECT id, price FROM seats WHERE id IN ({placeholders}) AND status = 'AVAILABLE' FOR UPDATE",
-            seat_ids,
-        )
-        seat_rows = await cur.fetchall()
+                    if len(seat_rows) != len(seat_ids):
+                        await conn.rollback()
+                        log.warning("좌석 이미 선점됨: reservationId=%s", reservation_id)
+                        processed_total.labels(result="seat_conflict").inc()
+                        return
 
-        if len(seat_rows) != len(seat_ids):
-            await conn.rollback()
-            log.warning("좌석 이미 선점됨: reservationId=%s", reservation_id)
-            processed_total.labels(result="seat_conflict").inc()
-            await delete_message(msg["ReceiptHandle"])
-            return
+                    total_price = sum(row[1] for row in seat_rows)
 
-        total_price = sum(row[1] for row in seat_rows)
+                    await cur.execute(
+                        "INSERT INTO reservations (id, user_id, event_id, status, total_price, expires_at) "
+                        "VALUES (%s, %s, %s, 'PENDING', %s, %s)",
+                        (reservation_id, user_id, event_id, total_price, expires_at),
+                    )
 
-        await cur.execute(
-            "INSERT INTO reservations (id, user_id, event_id, status, total_price, expires_at) "
-            "VALUES (%s, %s, %s, 'PENDING', %s, %s)",
-            (reservation_id, user_id, event_id, total_price, expires_at),
-        )
+                    for seat_id in seat_ids:
+                        await cur.execute(
+                            "INSERT INTO reservation_seats (reservation_id, seat_id) VALUES (%s, %s)",
+                            (reservation_id, seat_id),
+                        )
 
-        for seat_id in seat_ids:
-            await cur.execute(
-                "INSERT INTO reservation_seats (reservation_id, seat_id) VALUES (%s, %s)",
-                (reservation_id, seat_id),
-            )
+                    await cur.execute(
+                        f"UPDATE seats SET status = 'RESERVED' WHERE id IN ({placeholders})",
+                        seat_ids,
+                    )
 
-        await cur.execute(
-            f"UPDATE seats SET status = 'RESERVED' WHERE id IN ({placeholders})",
-            seat_ids,
-        )
+                    await conn.commit()
 
-        await conn.commit()
-        await cur.close()
-        writer_pool.release(conn)
-        conn = None
+                for key in lock_keys:
+                    await redis_client.delete(key)
 
-        for key in lock_keys:
-            await redis_client.delete(key)
-
-        processed_total.labels(result="success").inc()
-        log.info("예매 확정 완료: reservationId=%s", reservation_id)
+                processed_total.labels(result="success").inc()
+                log.info("예매 확정 완료: reservationId=%s", reservation_id)
+            except Exception:
+                await conn.rollback()
+                raise
 
     except Exception as e:
-        if conn:
-            await conn.rollback()
-            writer_pool.release(conn)
         processed_total.labels(result="error").inc()
         log.error("메시지 처리 실패: %s", e)
     finally:
-        await delete_message(msg.get("ReceiptHandle"))
+        if receipt:
+            await delete_message(receipt)
         elapsed = (time.time() - start) * 1000
         process_duration.observe(elapsed)
 
@@ -154,7 +153,7 @@ async def lifespan(app: FastAPI):
         password=os.getenv("DB_PASSWORD", ""),
         db=os.getenv("DB_NAME", "ticketing"),
         port=int(os.getenv("DB_PORT", "3306")),
-        maxsize=3,
+        maxsize=5,
         autocommit=False,
     )
     redis_client = aioredis.Redis(
