@@ -221,6 +221,17 @@ while [ $attempt -le $MAX_RETRIES ]; do
     kill $BG_PID 2>/dev/null; wait $BG_PID 2>/dev/null
     echo "=== destroy 완료 ==="
     rm -f /tmp/tf_destroy_output.log
+
+    # 다음 apply에서 옛 ALB ARN으로 인한 data source lookup 실패 방지.
+    # alb_listener_arn / frontend_callback_domain은 setup-all.sh가 새 ALB
+    # 만든 후 다시 자동 채워준다.
+    TFVARS="$ROOT/terraform/terraform.tfvars"
+    if [ -f "$TFVARS" ]; then
+      sed -i 's|^alb_listener_arn.*|alb_listener_arn = ""|' "$TFVARS" 2>/dev/null || true
+      sed -i 's|^frontend_callback_domain.*|frontend_callback_domain = ""|' "$TFVARS" 2>/dev/null || true
+      echo "tfvars: alb_listener_arn / frontend_callback_domain reset"
+    fi
+
     exit 0
   fi
 

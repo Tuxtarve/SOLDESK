@@ -167,6 +167,23 @@ else
   echo "기존 EBS 볼륨 없음 — 새로 생성됩니다 (첫 적용)"
 fi
 
+# ── 0.6. tfvars의 옛 alb_listener_arn validity 검증 ──
+# destroy.sh를 거치지 않고 setup-all.sh 단독 실행 또는 destroy 실패 후
+# 재시도 시, tfvars에 옛 ALB ARN이 박혀 있으면 main.tf의 data
+# "aws_lb_listener" 가 NotFound로 첫 apply 자체를 fail시킨다.
+TFVARS="$TF_DIR/terraform.tfvars"
+if [ -f "$TFVARS" ] && grep -q '^alb_listener_arn' "$TFVARS"; then
+  CURRENT_ARN=$(grep '^alb_listener_arn' "$TFVARS" | sed 's/.*= *"//;s/".*//')
+  if [ -n "$CURRENT_ARN" ]; then
+    if ! aws elbv2 describe-listeners --listener-arns "$CURRENT_ARN" \
+        --region "$REGION_FOR_IMPORT" >/dev/null 2>&1; then
+      echo "tfvars: 옛 alb_listener_arn이 invalid → 빈값으로 reset"
+      sed -i 's|^alb_listener_arn.*|alb_listener_arn = ""|' "$TFVARS"
+      sed -i 's|^frontend_callback_domain.*|frontend_callback_domain = ""|' "$TFVARS"
+    fi
+  fi
+fi
+
 # ── 1. Terraform Apply ──
 echo "=========================================="
 echo " [1/8] Terraform Apply"
