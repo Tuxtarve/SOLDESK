@@ -217,7 +217,10 @@ while [ $attempt -le $MAX_RETRIES ]; do
   ) &
   BG_PID=$!
 
-  if terraform destroy "$@" 2>&1 | tee /tmp/tf_destroy_output.log; then
+  # alb_listener_arn을 빈 값으로 override → main.tf의 data "aws_lb_listener"
+  # 가 count=0이 되어 stale ARN을 lookup하지 않음. ALB는 cleanup_vpc 단계에서
+  # 이미 삭제됐으니 lookup하면 무조건 NotFound로 destroy가 fail함.
+  if terraform destroy -var="alb_listener_arn=" "$@" 2>&1 | tee /tmp/tf_destroy_output.log; then
     kill $BG_PID 2>/dev/null; wait $BG_PID 2>/dev/null
     echo "=== destroy 완료 ==="
     rm -f /tmp/tf_destroy_output.log
