@@ -321,6 +321,13 @@
   padding: 0 34px 28px;
 }
 
+/* 결제 결과 단계: 취소 숨김 시 닫기만 전체 폭 */
+.theaters-detail-actions.is-result-step .theaters-detail-submit {
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 100%;
+}
+
 .theaters-detail-cancel,
 .theaters-detail-submit {
   flex: 1;

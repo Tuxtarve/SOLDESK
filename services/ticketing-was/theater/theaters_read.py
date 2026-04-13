@@ -131,10 +131,21 @@ def _fetch_bootstrap_from_db(movie_map):
             hall_rows = cur.fetchall()
 
             cur.execute("""
-                SELECT schedule_id, movie_id, hall_id, show_date, total_count, remain_count, status
-                FROM schedules
-                WHERE UPPER(COALESCE(status, 'OPEN')) IN ('OPEN', 'CLOSED')
-                ORDER BY show_date ASC, schedule_id ASC
+                SELECT s.schedule_id, s.movie_id, s.hall_id, s.show_date, s.total_count,
+                    GREATEST(0, s.total_count - IFNULL(bs.cnt, 0)) AS remain_count,
+                    CASE
+                      WHEN GREATEST(0, s.total_count - IFNULL(bs.cnt, 0)) <= 0 THEN 'CLOSED'
+                      WHEN UPPER(COALESCE(s.status, '')) = 'CLOSED' THEN 'CLOSED'
+                      ELSE 'OPEN'
+                    END AS status
+                FROM schedules s
+                LEFT JOIN (
+                    SELECT schedule_id, COUNT(*) AS cnt FROM booking_seats
+                    WHERE UPPER(COALESCE(status, '')) = 'ACTIVE'
+                    GROUP BY schedule_id
+                ) bs ON bs.schedule_id = s.schedule_id
+                WHERE UPPER(COALESCE(s.status, 'OPEN')) IN ('OPEN', 'CLOSED')
+                ORDER BY s.show_date ASC, s.schedule_id ASC
             """)
             schedule_rows = cur.fetchall()
 

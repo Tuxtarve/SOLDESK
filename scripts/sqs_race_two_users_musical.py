@@ -21,6 +21,9 @@
   Write API(유저 경로)만 쓰려면 --via-was (WRITE_API_BASE_URL / --write-api-base).
 
 전송 후 DB 확인: ../scripts/sql/musical_race_verify.sql (@show_id 설정)
+
+SQS 경로: 전송 → 큐 소진 대기(기본) → Redis 폴링. JSON 시간 키는 콘서트 부하 스크립트와 맞춤
+  (추가: 폴링_소요_초). --no-wait-sqs-queue 로 큐 대기 생략 가능.
 """
 from __future__ import annotations
 
@@ -45,6 +48,7 @@ except ImportError:
     sys.exit(1)
 
 import http_booking_client as http_w
+from sqs_load_common import wait_sqs_queue_idle
 
 DEFAULT_MUSICAL_TITLE = "뮤지컬 <별이 빛나는 밤>"
 
@@ -138,15 +142,26 @@ def _db_connect(db_name: str):
 def _nearest_musical_show(cur, concert_title: str) -> dict:
     cur.execute(
         """
-        SELECT cs.show_id, cs.concert_id, cs.show_date, cs.seat_rows, cs.seat_cols, cs.remain_count, cs.status,
+        SELECT cs.show_id, cs.concert_id, cs.show_date, cs.seat_rows, cs.seat_cols,
+               GREATEST(0, cs.total_count - IFNULL(cb.cnt, 0)) AS remain_count,
+               CASE
+                 WHEN GREATEST(0, cs.total_count - IFNULL(cb.cnt, 0)) <= 0 THEN 'CLOSED'
+                 WHEN UPPER(COALESCE(cs.status, '')) = 'CLOSED' THEN 'CLOSED'
+                 ELSE 'OPEN'
+               END AS status,
                c.title
         FROM concert_shows cs
         INNER JOIN concerts c ON c.concert_id = cs.concert_id
+        LEFT JOIN (
+            SELECT show_id, COUNT(*) AS cnt FROM concert_booking_seats
+            WHERE UPPER(COALESCE(status, '')) = 'ACTIVE'
+            GROUP BY show_id
+        ) cb ON cb.show_id = cs.show_id
         WHERE c.title = %s
           AND UPPER(COALESCE(cs.status, '')) = 'OPEN'
-          AND cs.remain_count > 0
+          AND GREATEST(0, cs.total_count - IFNULL(cb.cnt, 0)) > 0
           AND cs.show_date >= NOW()
-        ORDER BY cs.show_date ASC, cs.remain_count DESC
+        ORDER BY cs.show_date ASC, GREATEST(0, cs.total_count - IFNULL(cb.cnt, 0)) DESC
         LIMIT 1
         """,
         (concert_title,),
@@ -474,6 +489,25 @@ def parse_args():
         metavar="URL",
         help="Write API 베이스 URL (미지정 시 WRITE_API_BASE_URL)",
     )
+    p.add_argument(
+        "--no-wait-sqs-queue",
+        action="store_true",
+        help="SQS 전송 후 큐(가시+인플라이트+지연)가 비워질 때까지 대기하지 않음",
+    )
+    p.add_argument(
+        "--wait-queue-timeout-sec",
+        type=float,
+        default=900.0,
+        metavar="SEC",
+        help="큐 소진 대기 최대(초), 기본 900",
+    )
+    p.add_argument(
+        "--wait-queue-poll-sec",
+        type=float,
+        default=2.0,
+        metavar="SEC",
+        help="큐 깊이 폴링 간격(초), 기본 2",
+    )
     return p.parse_args()
 
 
@@ -599,9 +633,17 @@ def main():
             )
 
     if args.dry_run:
-        summary["소요_초"] = round(time.monotonic() - t0, 3)
+        _t1 = time.monotonic()
+        summary["준비_소요_초"] = round(_t1 - t0, 3)
+        summary["전송_소요_초"] = 0.0
+        summary["큐_소진_대기_초"] = 0.0
+        summary["큐_대기_타임아웃"] = False
+        summary["폴링_소요_초"] = 0.0
+        summary["전체_소요_초"] = round(_t1 - t0, 3)
+        summary["소요_초"] = summary["전체_소요_초"]
         summary["경로"] = "write_api" if args.via_was else "sqs"
-        summary["테스트후_잔여좌석"] = int(show.get("remain_count") or 0)
+        _remain0 = int(show.get("remain_count") or 0)
+        summary["테스트후_잔여좌석"] = _remain0 - len(payloads)
         print(json.dumps(summary, indent=2, ensure_ascii=False))
         print("--- dry-run 본문 샘플 ---")
         for p in payloads[:5]:
@@ -644,6 +686,7 @@ def main():
     ok = 0
     fail = 0
     done_rows: list[tuple[int, str, int, str]] = []
+    t_tx_start = time.monotonic()
     with ThreadPoolExecutor(max_workers=workers) as ex:
         fut_map = {ex.submit(_send_one, b): b for b in payloads}
         for fut in as_completed(fut_map):
@@ -662,11 +705,32 @@ def main():
         seq_disp = rs if overlap_mode else rs + 1
         send_order.append((ref, uid, sk, seq_disp))
 
+    t_tx_done = time.monotonic()
+    prep_sec = round(t_tx_start - t0, 3)
+    tx_sec = round(t_tx_done - t_tx_start, 3)
+
     summary["전송_성공"] = ok
     summary["전송_실패"] = fail
     summary["경로"] = "write_api" if args.via_was else "sqs"
 
+    if not args.via_was and not args.no_wait_sqs_queue and sqs is not None:
+        summary.update(
+            wait_sqs_queue_idle(
+                sqs,
+                queue_url,
+                timeout_sec=float(args.wait_queue_timeout_sec),
+                poll_interval_sec=float(args.wait_queue_poll_sec),
+            )
+        )
+    else:
+        summary["큐_소진_대기_초"] = 0.0
+        summary["큐_대기_타임아웃"] = False
+        summary["큐_종료_가시"] = None
+        summary["큐_종료_인플라이트"] = None
+        summary["큐_종료_지연"] = None
+
     results_map: dict[str, dict | None] = {}
+    poll_sec_elapsed = 0.0
     if not args.no_poll:
         r_cli, r_err = _booking_redis_connect()
         if not r_cli:
@@ -685,7 +749,9 @@ def main():
                 refs = [ref for ref, _, _, _ in send_order if ref]
             else:
                 refs = [p["booking_ref"] for p in payloads]
+            t_poll0 = time.monotonic()
             results_map = _poll_booking_results(r_cli, refs, float(args.poll_sec))
+            poll_sec_elapsed = round(time.monotonic() - t_poll0, 3)
             if overlap_mode:
                 _print_outcome_report(
                     user1=args.user1,
@@ -712,19 +778,14 @@ def main():
                 brief[ref] = results_map.get(ref)
             summary["폴링_결과_예약별"] = brief
 
-    summary["소요_초"] = round(time.monotonic() - t0, 3)
-    c_rem = _db_connect(_resolve_db_name(args.db_name))
-    try:
-        c_rem.autocommit(True)
-        with c_rem.cursor() as cur:
-            cur.execute(
-                "SELECT remain_count FROM concert_shows WHERE show_id = %s",
-                (sid,),
-            )
-            _row = cur.fetchone()
-        summary["테스트후_잔여좌석"] = int(_row["remain_count"]) if _row else None
-    finally:
-        c_rem.close()
+    t_final = time.monotonic()
+    summary["준비_소요_초"] = prep_sec
+    summary["전송_소요_초"] = tx_sec
+    summary["폴링_소요_초"] = poll_sec_elapsed
+    summary["전체_소요_초"] = round(t_final - t0, 3)
+    summary["소요_초"] = summary["전체_소요_초"]
+    _remain0 = int(show.get("remain_count") or 0)
+    summary["테스트후_잔여좌석"] = _remain0 - len(payloads)
     print(json.dumps(summary, indent=2, ensure_ascii=False, default=str))
 
     print(f"\nDB 검증: ../scripts/sql/musical_race_verify.sql → SET @show_id := {sid};")

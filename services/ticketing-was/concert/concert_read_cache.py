@@ -152,9 +152,22 @@ def _fetch_concert_show_rows(concert_id: int) -> List[Dict[str, Any]]:
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT show_id, concert_id, show_date, venue_name, venue_address,
-                    hall_name, seat_rows, seat_cols, total_count, remain_count, price, status
-                FROM concert_shows WHERE concert_id = %s ORDER BY show_date ASC
+                SELECT cs.show_id, cs.concert_id, cs.show_date, cs.venue_name, cs.venue_address,
+                    cs.hall_name, cs.seat_rows, cs.seat_cols, cs.total_count,
+                    GREATEST(0, cs.total_count - IFNULL(cb.cnt, 0)) AS remain_count,
+                    cs.price,
+                    CASE
+                      WHEN GREATEST(0, cs.total_count - IFNULL(cb.cnt, 0)) <= 0 THEN 'CLOSED'
+                      WHEN UPPER(COALESCE(cs.status, '')) = 'CLOSED' THEN 'CLOSED'
+                      ELSE 'OPEN'
+                    END AS status
+                FROM concert_shows cs
+                LEFT JOIN (
+                    SELECT show_id, COUNT(*) AS cnt FROM concert_booking_seats
+                    WHERE UPPER(COALESCE(status, '')) = 'ACTIVE'
+                    GROUP BY show_id
+                ) cb ON cb.show_id = cs.show_id
+                WHERE cs.concert_id = %s ORDER BY cs.show_date ASC
             """, (concert_id,))
             return list(cur.fetchall() or [])
     finally:
@@ -189,9 +202,22 @@ def _fetch_concert_show_row(concert_id: int, show_id: int) -> Optional[Dict[str,
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT show_id, concert_id, show_date, venue_name, venue_address,
-                    hall_name, seat_rows, seat_cols, total_count, remain_count, price, status
-                FROM concert_shows WHERE concert_id = %s AND show_id = %s
+                SELECT cs.show_id, cs.concert_id, cs.show_date, cs.venue_name, cs.venue_address,
+                    cs.hall_name, cs.seat_rows, cs.seat_cols, cs.total_count,
+                    GREATEST(0, cs.total_count - IFNULL(cb.cnt, 0)) AS remain_count,
+                    cs.price,
+                    CASE
+                      WHEN GREATEST(0, cs.total_count - IFNULL(cb.cnt, 0)) <= 0 THEN 'CLOSED'
+                      WHEN UPPER(COALESCE(cs.status, '')) = 'CLOSED' THEN 'CLOSED'
+                      ELSE 'OPEN'
+                    END AS status
+                FROM concert_shows cs
+                LEFT JOIN (
+                    SELECT show_id, COUNT(*) AS cnt FROM concert_booking_seats
+                    WHERE UPPER(COALESCE(status, '')) = 'ACTIVE'
+                    GROUP BY show_id
+                ) cb ON cb.show_id = cs.show_id
+                WHERE cs.concert_id = %s AND cs.show_id = %s
             """, (concert_id, show_id))
             r = cur.fetchone()
         return dict(r) if r else None

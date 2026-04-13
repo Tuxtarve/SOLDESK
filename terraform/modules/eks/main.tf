@@ -250,21 +250,21 @@ resource "aws_iam_role" "sqs_access" {
   name = "${local.name_prefix}-sqs-access-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Federated = aws_iam_openid_connect_provider.eks.arn
-      }
-      Action = "sts:AssumeRoleWithWebIdentity"
-      Condition = {
-        StringEquals = {
-          "${local.oidc_issuer}:aud" = "sts.amazonaws.com"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.eks.arn
         }
-        StringLike = {
-          "${local.oidc_issuer}:sub" = "system:serviceaccount:ticketing:sqs-access-sa"
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "${local.oidc_issuer}:aud" = "sts.amazonaws.com"
+            "${local.oidc_issuer}:sub" = "system:serviceaccount:ticketing:sqs-access-sa"
+          }
         }
       }
-    }]
+    ]
   })
 }
 

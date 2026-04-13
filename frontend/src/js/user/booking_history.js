@@ -40,15 +40,14 @@
     return `${yyyy}-${mm}-${dd} ${hh}:${mi}`;
   }
 
-  /** concert_booking_modal / theaters_detail 과 동일: DB 키 "행-열" → "A열 n번" 또는 "95열 18번" */
+  /** DB 키 "행-열" → "1열 n번" 또는 "95열 18번" (화면 표기용) */
   function formatSeat(seatKey) {
     const parts = String(seatKey).split('-');
     if (parts.length !== 2) return escapeHtml(String(seatKey));
     const row = parseInt(parts[0], 10);
     const col = parseInt(parts[1], 10);
     if (Number.isNaN(row) || Number.isNaN(col)) return escapeHtml(String(seatKey));
-    const rowLabel =
-      row === 1 ? 'A열' : row === 2 ? 'B열' : row === 3 ? 'C열' : `${row}열`;
+    const rowLabel = `${row}열`;
     return escapeHtml(`${rowLabel} ${col}번`);
   }
 

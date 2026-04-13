@@ -3,6 +3,7 @@
 극장(theater) 실제 좌석 기준 예매 부하 — DB에서 빈 좌석을 조회한 뒤 아래 중 선택해 전송한다.
 
   • 기본: SQS FIFO 직접 전송 (워커 본문과 동일 JSON, MessageGroupId = schedule_id-user_id).
+    API 는 send_message_batch 를 쓰지만 **Entry마다 별도 SQS 메시지 1건**이다.
   • --via-was: Write API POST /api/write/theaters/booking/commit 만 (유저 경로와 동일).
   • --also-via-was: 좌석 목록을 반으로 나눠 앞쪽은 SQS, 뒤쪽은 Write API (한 번에 두 경로 검증).
 
@@ -19,6 +20,9 @@ Write API: WRITE_API_BASE_URL 또는 --write-api-base (write_api_건수 > 0 일 
   회차 선택: show_date >= '지금'(기본 Asia/Seoul wall-clock, naive DATETIME 와 동일 축).
     시드 상영시각은 지역 시각으로 넣고 RDS NOW() 는 UTC 인 경우가 많아, NOW() 직접 비교 시
     이미 지난 회차가 잘못 선택될 수 있음. TZ 는 환경변수 SCHEDULE_CUTOFF_TZ 로 변경 가능.
+
+JSON 시간 필드(실전 전송 시): sqs_load_real_concert.py 와 동일 키
+  (준비·전송·큐_소진_대기·폴링·전체·소요_초, --no-wait-sqs-queue 등).
 
 예:
   python3 ../scripts/sqs_load_real_theater.py -n 30 --dry-run
@@ -51,6 +55,7 @@ except ImportError:
     sys.exit(1)
 
 import http_booking_client as http_w
+from sqs_load_common import wait_sqs_queue_idle
 
 
 def _terraform_dir() -> Path:
@@ -194,10 +199,21 @@ def _pick_schedule(cur, schedule_id: Optional[int]):
     if schedule_id is not None:
         cur.execute(
             """
-            SELECT s.schedule_id, s.hall_id, s.remain_count, s.status, s.movie_id, s.show_date,
-                   s.total_count, m.title AS movie_title
+            SELECT s.schedule_id, s.hall_id,
+                   GREATEST(0, s.total_count - IFNULL(bs.cnt, 0)) AS remain_count,
+                   CASE
+                     WHEN GREATEST(0, s.total_count - IFNULL(bs.cnt, 0)) <= 0 THEN 'CLOSED'
+                     WHEN UPPER(COALESCE(s.status, '')) = 'CLOSED' THEN 'CLOSED'
+                     ELSE 'OPEN'
+                   END AS status,
+                   s.movie_id, s.show_date, s.total_count, m.title AS movie_title
             FROM schedules s
             INNER JOIN movies m ON m.movie_id = s.movie_id
+            LEFT JOIN (
+                SELECT schedule_id, COUNT(*) AS cnt FROM booking_seats
+                WHERE UPPER(COALESCE(status, '')) = 'ACTIVE'
+                GROUP BY schedule_id
+            ) bs ON bs.schedule_id = s.schedule_id
             WHERE s.schedule_id = %s
               AND s.show_date >= %s
             """,
@@ -212,14 +228,25 @@ def _pick_schedule(cur, schedule_id: Optional[int]):
         return row
     cur.execute(
         """
-        SELECT s.schedule_id, s.hall_id, s.remain_count, s.status, s.movie_id, s.show_date,
-               s.total_count, m.title AS movie_title
+        SELECT s.schedule_id, s.hall_id,
+               GREATEST(0, s.total_count - IFNULL(bs.cnt, 0)) AS remain_count,
+               CASE
+                 WHEN GREATEST(0, s.total_count - IFNULL(bs.cnt, 0)) <= 0 THEN 'CLOSED'
+                 WHEN UPPER(COALESCE(s.status, '')) = 'CLOSED' THEN 'CLOSED'
+                 ELSE 'OPEN'
+               END AS status,
+               s.movie_id, s.show_date, s.total_count, m.title AS movie_title
         FROM schedules s
         INNER JOIN movies m ON m.movie_id = s.movie_id
+        LEFT JOIN (
+            SELECT schedule_id, COUNT(*) AS cnt FROM booking_seats
+            WHERE UPPER(COALESCE(status, '')) = 'ACTIVE'
+            GROUP BY schedule_id
+        ) bs ON bs.schedule_id = s.schedule_id
         WHERE UPPER(COALESCE(s.status, '')) = 'OPEN'
-          AND s.remain_count > 0
+          AND GREATEST(0, s.total_count - IFNULL(bs.cnt, 0)) > 0
           AND s.show_date >= %s
-        ORDER BY s.show_date ASC, s.remain_count DESC
+        ORDER BY s.show_date ASC, GREATEST(0, s.total_count - IFNULL(bs.cnt, 0)) DESC
         LIMIT 1
         """,
         (cutoff,),
@@ -311,6 +338,25 @@ def parse_args():
         type=float,
         default=120.0,
         help="--http-poll 시 건당 최대 대기(초), 기본 120",
+    )
+    p.add_argument(
+        "--no-wait-sqs-queue",
+        action="store_true",
+        help="SQS 전송 후 큐(가시+인플라이트+지연)가 비워질 때까지 대기하지 않음",
+    )
+    p.add_argument(
+        "--wait-queue-timeout-sec",
+        type=float,
+        default=900.0,
+        metavar="SEC",
+        help="큐 소진 대기 최대(초), 기본 900",
+    )
+    p.add_argument(
+        "--wait-queue-poll-sec",
+        type=float,
+        default=2.0,
+        metavar="SEC",
+        help="큐 깊이 폴링 간격(초), 기본 2",
     )
     return p.parse_args()
 
@@ -421,8 +467,15 @@ def main():
             }
 
         if args.dry_run:
-            summary["소요_초"] = round(time.monotonic() - t0, 3)
-            summary["테스트후_잔여좌석"] = remain
+            _t1 = time.monotonic()
+            summary["준비_소요_초"] = round(_t1 - t0, 3)
+            summary["전송_소요_초"] = 0.0
+            summary["큐_소진_대기_초"] = 0.0
+            summary["큐_대기_타임아웃"] = False
+            summary["폴링_소요_초"] = 0.0
+            summary["전체_소요_초"] = round(_t1 - t0, 3)
+            summary["소요_초"] = summary["전체_소요_초"]
+            summary["테스트후_잔여좌석"] = remain - args.count
             print(json.dumps(summary, indent=2, ensure_ascii=False))
             if bodies:
                 print("--- dry-run SQS 본문 샘플(최대 3) ---")
@@ -451,6 +504,8 @@ def main():
 
         sent = 0
         errors = 0
+        sqs = None
+        t_tx_start = time.monotonic()
         if sqs_n > 0:
             sqs = boto3.client("sqs", region_name=args.region)
             for batch_start in range(0, len(bodies), 10):
@@ -491,7 +546,9 @@ def main():
                     print(f"Write API 실패 HTTP {code} seat={sk} body={j!r}", file=sys.stderr)
 
         polled: dict[str, dict] = {}
+        poll_sec = 0.0
         if args.http_poll and http_refs:
+            t_poll0 = time.monotonic()
             for ref, sk in http_refs:
                 polled[f"{ref}({sk})"] = http_w.poll_booking_status(
                     write_base,
@@ -499,7 +556,12 @@ def main():
                     "theater",
                     timeout_sec=float(args.poll_sec),
                 )
+            poll_sec = round(time.monotonic() - t_poll0, 3)
             summary["HTTP_폴링_결과"] = polled
+
+        t_tx_done = time.monotonic()
+        prep_sec = round(t_tx_start - t0, 3)
+        tx_sec = round(t_tx_done - t_tx_start, 3)
 
         summary["SQS_전송_성공"] = sent
         summary["SQS_전송_실패"] = errors
@@ -507,20 +569,30 @@ def main():
         summary["HTTP_접수_실패"] = http_fail
         summary["전송_성공"] = sent + http_ok
         summary["전송_실패"] = errors + http_fail
-        summary["소요_초"] = round(time.monotonic() - t0, 3)
-        dbn = _resolve_db_name(args.db_name)
-        c_rem = _db_connect(dbn)
-        try:
-            c_rem.autocommit(True)
-            with c_rem.cursor() as cur:
-                cur.execute(
-                    "SELECT remain_count FROM schedules WHERE schedule_id = %s",
-                    (sid,),
+
+        if sqs_n > 0 and not args.no_wait_sqs_queue and sqs is not None:
+            summary.update(
+                wait_sqs_queue_idle(
+                    sqs,
+                    queue_url,
+                    timeout_sec=float(args.wait_queue_timeout_sec),
+                    poll_interval_sec=float(args.wait_queue_poll_sec),
                 )
-                _row = cur.fetchone()
-            summary["테스트후_잔여좌석"] = int(_row["remain_count"]) if _row else None
-        finally:
-            c_rem.close()
+            )
+        else:
+            summary["큐_소진_대기_초"] = 0.0
+            summary["큐_대기_타임아웃"] = False
+            summary["큐_종료_가시"] = None
+            summary["큐_종료_인플라이트"] = None
+            summary["큐_종료_지연"] = None
+
+        t_final = time.monotonic()
+        summary["준비_소요_초"] = prep_sec
+        summary["전송_소요_초"] = tx_sec
+        summary["폴링_소요_초"] = poll_sec
+        summary["전체_소요_초"] = round(t_final - t0, 3)
+        summary["소요_초"] = summary["전체_소요_초"]
+        summary["테스트후_잔여좌석"] = remain - args.count
         print(json.dumps(summary, indent=2, ensure_ascii=False))
         if errors or http_fail:
             sys.exit(1)

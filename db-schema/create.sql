@@ -86,6 +86,7 @@ CREATE TABLE IF NOT EXISTS schedules (
   hall_id BIGINT NOT NULL,
   show_date DATETIME NOT NULL,
   total_count INT NOT NULL,
+  /* 런타임 잔여는 booking_seats ACTIVE 건수로 유도; 컬럼은 제약·시드·수동 동기화용 */
   remain_count INT NOT NULL,
   status VARCHAR(20) NOT NULL DEFAULT 'OPEN',
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -185,6 +186,7 @@ CREATE TABLE IF NOT EXISTS concert_shows (
   seat_rows INT NOT NULL,
   seat_cols INT NOT NULL,
   total_count INT NOT NULL,
+  /* 런타임 잔여는 concert_booking_seats ACTIVE 건수로 유도; 컬럼은 제약·시드·수동 동기화용 */
   remain_count INT NOT NULL,
   price INT NOT NULL DEFAULT 120000,
   status VARCHAR(20) NOT NULL DEFAULT 'OPEN',

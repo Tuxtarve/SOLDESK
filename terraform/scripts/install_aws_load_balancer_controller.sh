@@ -21,7 +21,13 @@ if ! command -v helm >/dev/null 2>&1; then
   exit 127
 fi
 
-aws eks update-kubeconfig --name "${CLUSTER_NAME}" --region "${AWS_REGION}"
+# Parallel Terraform local-exec provisioners can run update-kubeconfig against the same
+# ~/.kube/config and corrupt YAML. Use an isolated file per invocation.
+unset KUBECONFIG 2>/dev/null || true
+_TMP_KUBECONFIG="$(mktemp)"
+export KUBECONFIG="$_TMP_KUBECONFIG"
+trap 'rm -f "$_TMP_KUBECONFIG"' EXIT
+aws eks update-kubeconfig --name "${CLUSTER_NAME}" --region "${AWS_REGION}" --kubeconfig "$_TMP_KUBECONFIG"
 
 helm repo add eks https://aws.github.io/eks-charts >/dev/null 2>&1 || true
 helm repo update >/dev/null

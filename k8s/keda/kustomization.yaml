@@ -1,12 +1,11 @@
 # KEDA operator 는 terraform helm_release(keda_helm.tf) 로 설치. post_apply_k8s_bootstrap.sh 가 CRD 대기 후 이 디렉터리를 kubectl apply.
-# ScaledObject 는 기본 paused(자동 스케일 끔).
+# ScaledObject 는 기본 paused(자동 스케일 끔). 켤 때만 paused- 어노테이션.
 #
 # 수동만 할 때: terraform 없이 KEDA helm 설치 후
 #   ./k8s/scripts/patch-sqs-access-sa-irsa.sh
 #   kubectl apply -k k8s/keda
 #
-# 자동 스케일 켜기: kubectl annotate scaledobject worker-svc-sqs -n ticketing autoscaling.keda.sh/paused-
-# 다시 끄기: kubectl annotate scaledobject worker-svc-sqs -n ticketing autoscaling.keda.sh/paused=true --overwrite
+# 워커 오토스케일은 KEDA ScaledObject 로 수행.
 #
 # KEDA 설치 끄기: terraform 변수 install_keda = false
 apiVersion: kustomize.config.k8s.io/v1beta1
@@ -14,6 +13,7 @@ kind: Kustomization
 
 namespace: ticketing
 
+# 참고: UI 워커까지 KEDA로 각각 스케일하면 합산 상한 관리가 필요할 수 있음.
 resources:
   - triggerauthentication-worker-sqs.yaml
-  - scaledobject-worker-svc.yaml
+  - scaledobject-worker-svc-sqs.yaml

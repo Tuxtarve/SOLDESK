@@ -2,6 +2,9 @@
 """
 SQS FIFO 부하 테스트 — N건 send_message_batch (건당 API 최대 10건).
 
+  send_message_batch 의 각 Entry 는 **별도의 SQS 메시지**이다.
+  (한 메시지 안에 예매 N건을 JSON 배열로 넣는 구조가 아니므로, 워커·FIFO 그룹 분산과 혼동하지 말 것.)
+
   pip install boto3   # 없을 때만 (ticketing-was requirements.txt 에도 있음)
 
 실행 cwd 무관 — 이 파일이 저장소의 scripts/ 아래 있다고 가정하고,
@@ -15,6 +18,9 @@ FIFO는 MessageGroupId 당 순차 처리이므로, --groups 로 그룹을 나눠
 주의:
   - 워커가 돌면 메시지당 DB 조회 + Redis (없는 schedule_id → NOT_FOUND 후 ACK).
   - 큐에만 쌓이는 속도만 재려면 워커 레플리카 0 등으로 소비를 잠시 끊을 것.
+
+JSON: 전송_소요_초(배치 전송만), 큐_소진_대기_초(기본 대기), 전체_소요_초·소요_초(전송+큐 소진).
+  큐 대기 끄기: --no-wait-sqs-queue
 """
 from __future__ import annotations
 
@@ -33,6 +39,8 @@ try:
 except ImportError:
     print("boto3 가 필요합니다: pip install boto3", file=sys.stderr)
     sys.exit(1)
+
+from sqs_load_common import wait_sqs_queue_idle
 
 
 def parse_args() -> argparse.Namespace:
@@ -54,6 +62,25 @@ def parse_args() -> argparse.Namespace:
         default=50,
         metavar="G",
         help="FIFO MessageGroupId 개수 (부하를 그룹별로 분산, 기본 50)",
+    )
+    p.add_argument(
+        "--no-wait-sqs-queue",
+        action="store_true",
+        help="전송 후 큐(가시+인플라이트+지연)가 비워질 때까지 대기하지 않음",
+    )
+    p.add_argument(
+        "--wait-queue-timeout-sec",
+        type=float,
+        default=900.0,
+        metavar="SEC",
+        help="큐 소진 대기 최대(초), 기본 900",
+    )
+    p.add_argument(
+        "--wait-queue-poll-sec",
+        type=float,
+        default=2.0,
+        metavar="SEC",
+        help="큐 깊이 폴링 간격(초), 기본 2",
     )
     return p.parse_args()
 
@@ -122,7 +149,8 @@ def main() -> None:
     groups = max(1, int(args.groups))
     sent = 0
     errors = 0
-    t0 = time.perf_counter()
+    t_script0 = time.monotonic()
+    t_tx_start = time.monotonic()
 
     for batch_start in range(0, args.count, 10):
         batch_len = min(10, args.count - batch_start)
@@ -148,14 +176,41 @@ def main() -> None:
             print(f"Failed entry: {f}", file=sys.stderr)
         sent += len(resp.get("Successful", []) or [])
 
-    elapsed = time.perf_counter() - t0
-    rate = sent / elapsed if elapsed > 0 else 0
+    t_tx_done = time.monotonic()
+    tx_sec = round(t_tx_done - t_tx_start, 3)
+    rate = sent / tx_sec if tx_sec > 0 else 0
+
+    if not args.no_wait_sqs_queue:
+        qinfo = wait_sqs_queue_idle(
+            client,
+            args.queue_url,
+            timeout_sec=float(args.wait_queue_timeout_sec),
+            poll_interval_sec=float(args.wait_queue_poll_sec),
+        )
+    else:
+        qinfo = {
+            "큐_소진_대기_초": 0.0,
+            "큐_대기_타임아웃": False,
+            "큐_종료_가시": None,
+            "큐_종료_인플라이트": None,
+            "큐_종료_지연": None,
+        }
+
+    t_final = time.monotonic()
+    prep_sec = round(t_tx_start - t_script0, 3)
+    total_sec = round(t_final - t_script0, 3)
+
     print(
         json.dumps(
             {
                 "전송_성공": sent,
                 "전송_실패": errors,
-                "소요_초": round(elapsed, 3),
+                "준비_소요_초": prep_sec,
+                "전송_소요_초": tx_sec,
+                "폴링_소요_초": 0.0,
+                **qinfo,
+                "전체_소요_초": total_sec,
+                "소요_초": total_sec,
                 "초당_메시지": round(rate, 1),
                 "FIFO_그룹_수": groups,
                 "테스트후_잔여좌석": None,

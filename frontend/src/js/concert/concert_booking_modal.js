@@ -1,9 +1,9 @@
 (function () {
   const THEATERS_DETAIL_CSS_PATH = '/css/theaters/theaters_detail.css';
-  const THEATERS_DETAIL_CSS_URL = `${THEATERS_DETAIL_CSS_PATH}?v=20260408_concert_base`;
+  const THEATERS_DETAIL_CSS_URL = `${THEATERS_DETAIL_CSS_PATH}?v=20260413_concert_base`;
 
   const CONCERT_MODAL_CSS_PATH = '/css/concert/concert_booking_modal.css';
-  const CONCERT_MODAL_CSS_URL = `${CONCERT_MODAL_CSS_PATH}?v=20260408_concert_modal`;
+  const CONCERT_MODAL_CSS_URL = `${CONCERT_MODAL_CSS_PATH}?v=20260413_concert_nav`;
   const OVERLAY_ID = 'concert-booking-detail-overlay';
   const BODY_ACTIVE_CLASS = 'theaters-booking-modal-open';
 
@@ -134,7 +134,7 @@
 
   function createSeatLabel(row, col) {
     const rowNo = toInt(row);
-    const rowLabel = rowNo === 1 ? 'A열' : rowNo === 2 ? 'B열' : rowNo === 3 ? 'C열' : `${rowNo}열`;
+    const rowLabel = `${rowNo}열`;
     return `${rowLabel} ${col}번`;
   }
 
@@ -262,6 +262,7 @@
     const closeButton = overlay.querySelector('.theaters-detail-close');
     const cancelButton = overlay.querySelector('.theaters-detail-cancel');
     const submitButton = overlay.querySelector('.theaters-detail-submit');
+    const actionsRow = overlay.querySelector('.theaters-detail-actions');
     const seatGrid = overlay.querySelector('.theaters-detail-seat-grid');
     const selectedValue = overlay.querySelector('.theaters-detail-selected-value');
     const selectedCount = overlay.querySelector('.theaters-detail-count');
@@ -325,6 +326,14 @@
       if (confirmPanel) confirmPanel.hidden = step !== 2;
       if (resultPanel) resultPanel.hidden = step !== 3;
 
+      if (step === 3) {
+        if (cancelButton) cancelButton.hidden = true;
+        if (actionsRow) actionsRow.classList.add('is-result-step');
+      } else {
+        if (cancelButton) cancelButton.hidden = false;
+        if (actionsRow) actionsRow.classList.remove('is-result-step');
+      }
+
       if (step === 1) {
         submitButton.textContent = '결제 진행';
         submitButton.disabled = selectedSeats.size === 0;
@@ -366,7 +375,7 @@
 
         const rowLabel = document.createElement('div');
         rowLabel.className = 'theaters-detail-seat-row-label';
-        rowLabel.textContent = row === 1 ? 'A열' : row === 2 ? 'B열' : row === 3 ? 'C열' : `${row}열`;
+        rowLabel.textContent = `${row}열`;
         rowWrap.appendChild(rowLabel);
 
         const rowSeats = document.createElement('div');
@@ -428,12 +437,12 @@
 
       const rowPrev = document.createElement('button');
       rowPrev.type = 'button';
-      rowPrev.className = 'theaters-booking-calendar-btn';
+      rowPrev.className = 'concert-seat-nav-btn';
       rowPrev.textContent = '열 이전';
 
       const rowNext = document.createElement('button');
       rowNext.type = 'button';
-      rowNext.className = 'theaters-booking-calendar-btn';
+      rowNext.className = 'concert-seat-nav-btn';
       rowNext.textContent = '열 다음';
 
       const pageInfo = document.createElement('div');
@@ -444,12 +453,12 @@
 
       const prevBtn = document.createElement('button');
       prevBtn.type = 'button';
-      prevBtn.className = 'theaters-booking-calendar-btn';
+      prevBtn.className = 'concert-seat-nav-btn';
       prevBtn.textContent = '좌석 이전';
 
       const nextBtn = document.createElement('button');
       nextBtn.type = 'button';
-      nextBtn.className = 'theaters-booking-calendar-btn';
+      nextBtn.className = 'concert-seat-nav-btn';
       nextBtn.textContent = '좌석 다음';
 
       const jump = document.createElement('div');
@@ -457,7 +466,7 @@
       jump.innerHTML = `
         <span style="font-size:13px;color:#555;">좌석번호 이동</span>
         <input type="number" min="1" max="${seatCols}" placeholder="번호 입력">
-        <button type="button" class="theaters-booking-calendar-btn">이동</button>
+        <button type="button" class="concert-seat-nav-btn">이동</button>
       `;
 
       rowPaging.appendChild(rowPrev);
@@ -478,7 +487,7 @@
 
       const rowLabel = document.createElement('div');
       rowLabel.className = 'theaters-detail-seat-row-label';
-      rowLabel.textContent = 'A열';
+      rowLabel.textContent = '1열';
       rowWrap.appendChild(rowLabel);
 
       const rowSeats = document.createElement('div');
@@ -490,7 +499,7 @@
       seatGrid.appendChild(rowWrap);
 
       function getRowLabel(row) {
-        return row === 1 ? 'A열' : row === 2 ? 'B열' : row === 3 ? 'C열' : `${row}열`;
+        return `${row}열`;
       }
 
       function renderRowButtons() {

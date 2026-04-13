@@ -1,9 +1,8 @@
 """
 극장 예매 쓰기 — SQS FIFO 통합 버전.
 
-원본: _ScheduleLockPool(threading.Lock)으로 in-process 직렬화
-변경: SQS FIFO MessageGroupId=schedule_id-user_id (유저별 병렬, 동일 스케줄도 DB 락으로 정합성).
-      실제 DB 트랜잭션은 worker-svc가 처리.
+MessageGroupId=schedule_id-user_id 로 유저별 FIFO 파이프를 나눈다.
+실제 좌석·잔여 처리는 worker-svc 가 DB에서 좌석 유니크 + 원자적 잔여 UPDATE 로 수행한다.
 """
 import json
 import secrets

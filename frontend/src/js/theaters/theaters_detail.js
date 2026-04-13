@@ -1,7 +1,7 @@
 (function () {
   const THEATERS_DETAIL_CSS_PATH = '/css/theaters/theaters_detail.css';
   // 캐시로 CSS가 안 바뀌는 경우가 있어 버전 쿼리를 붙입니다.
-  const THEATERS_DETAIL_CSS_URL = `${THEATERS_DETAIL_CSS_PATH}?v=20260407_3`;
+  const THEATERS_DETAIL_CSS_URL = `${THEATERS_DETAIL_CSS_PATH}?v=20260413_result_actions`;
   const OVERLAY_ID = 'theaters-booking-detail-overlay';
   const BODY_ACTIVE_CLASS = 'theaters-booking-modal-open';
 
@@ -232,6 +232,7 @@
     const closeButton = overlay.querySelector('.theaters-detail-close');
     const cancelButton = overlay.querySelector('.theaters-detail-cancel');
     const submitButton = overlay.querySelector('.theaters-detail-submit');
+    const actionsRow = overlay.querySelector('.theaters-detail-actions');
     const seatGrid = overlay.querySelector('.theaters-detail-seat-grid');
     const selectedValue = overlay.querySelector('.theaters-detail-selected-value');
     const selectedCount = overlay.querySelector('.theaters-detail-count');
@@ -292,6 +293,14 @@
       if (seatPanel) seatPanel.hidden = step !== 1;
       if (confirmPanel) confirmPanel.hidden = step !== 2;
       if (resultPanel) resultPanel.hidden = step !== 3;
+
+      if (step === 3) {
+        if (cancelButton) cancelButton.hidden = true;
+        if (actionsRow) actionsRow.classList.add('is-result-step');
+      } else {
+        if (cancelButton) cancelButton.hidden = false;
+        if (actionsRow) actionsRow.classList.remove('is-result-step');
+      }
 
       if (step === 1) {
         submitButton.textContent = '결제 진행';

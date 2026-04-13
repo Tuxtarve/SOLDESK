@@ -20,8 +20,9 @@ resource "null_resource" "k8s_bootstrap_after_apply" {
   triggers = {
     cluster_name        = module.eks.cluster_name
     kustomization       = filemd5(abspath("${path.root}/../k8s/kustomization.yaml"))
-    keda_scaledobject   = filemd5(abspath("${path.root}/../k8s/keda/scaledobject-worker-svc.yaml"))
-    keda_triggerauth    = filemd5(abspath("${path.root}/../k8s/keda/triggerauthentication-worker-sqs.yaml"))
+    k8s_priorityclass   = filemd5(abspath("${path.root}/../k8s/priorityclass-ticketing.yaml"))
+    k8s_pdb             = filemd5(abspath("${path.root}/../k8s/pdb-user-facing.yaml"))
+    keda_triggerauth         = filemd5(abspath("${path.root}/../k8s/keda/triggerauthentication-worker-sqs.yaml"))
     post_apply_bootstrap_script = filemd5(abspath("${path.root}/scripts/post_apply_k8s_bootstrap.sh"))
   }
 
@@ -33,7 +34,8 @@ resource "null_resource" "k8s_bootstrap_after_apply" {
       # 같은 apply 중 nested `terraform output`은 state 락·sensitive 출력 때문에 실패할 수 있음 → 모듈 값 직접 전달
       POST_APPLY_RDS_WRITER_ENDPOINT     = nonsensitive(module.rds.writer_endpoint)
       POST_APPLY_REDIS_PRIMARY_ENDPOINT  = nonsensitive(module.elasticache.redis_endpoint)
-      POST_APPLY_SQS_QUEUE_URL           = module.sqs.reservation_queue_url
+      POST_APPLY_SQS_QUEUE_URL                    = module.sqs.reservation_queue_url
+      POST_APPLY_SQS_INTERACTIVE_QUEUE_URL        = module.sqs.reservation_interactive_queue_url
       EKS_CLUSTER_NAME          = module.eks.cluster_name
       AWS_REGION                = var.aws_region
       TICKETING_NAMESPACE       = var.ticketing_namespace

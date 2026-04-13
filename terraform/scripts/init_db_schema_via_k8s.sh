@@ -21,8 +21,14 @@ if ! command -v kubectl >/dev/null 2>&1; then
   exit 127
 fi
 
+# Avoid corrupting ~/.kube/config when other null_resource local-exec runs in parallel.
+unset KUBECONFIG 2>/dev/null || true
+_TMP_KUBECONFIG="$(mktemp)"
+export KUBECONFIG="$_TMP_KUBECONFIG"
+trap 'rm -f "$_TMP_KUBECONFIG"' EXIT
+
 echo "=== kubeconfig: ${EKS_CLUSTER_NAME} (${AWS_REGION}) ==="
-aws eks update-kubeconfig --name "${EKS_CLUSTER_NAME}" --region "${AWS_REGION}"
+aws eks update-kubeconfig --name "${EKS_CLUSTER_NAME}" --region "${AWS_REGION}" --kubeconfig "$_TMP_KUBECONFIG"
 
 if [ ! -f "$CREATE_SQL" ]; then
   echo "create.sql not found at: $CREATE_SQL"
@@ -44,6 +50,7 @@ kubectl get ns "$K8S_NAMESPACE" >/dev/null 2>&1 || kubectl create ns "$K8S_NAMES
 
 cleanup() {
   kubectl -n "$K8S_NAMESPACE" delete pod "$POD_NAME" --ignore-not-found >/dev/null 2>&1 || true
+  rm -f "$_TMP_KUBECONFIG"
 }
 trap cleanup EXIT
 

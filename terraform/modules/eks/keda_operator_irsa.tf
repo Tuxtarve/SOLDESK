@@ -1,5 +1,5 @@
 # KEDA operator Pod 가 SQS GetQueueAttributes 로 스케일 메트릭 조회 (ScaledObject aws-sqs-queue).
-# TriggerAuthentication identityOwner=operator 일 때 이 역할이 사용됨.
+# TriggerAuthentication identityOwner=keda 일 때 이 역할이 사용됨 (KEDA operator SA).
 # (workload sqs-access-sa IRSA 는 워커 Pod 용이며, KEDA operator 프로세스에서는 동작하지 않는 경우가 많음)
 
 resource "aws_iam_role" "keda_operator" {

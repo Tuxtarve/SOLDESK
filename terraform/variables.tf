@@ -105,6 +105,16 @@ variable "run_k8s_bootstrap_after_apply" {
   default     = true
 }
 
+variable "sync_host_kubeconfig_after_apply" {
+  description = <<-EOT
+    true: apply 마지막에 Terraform 호스트의 ~/.kube/config 를 한 번 동기화한다.
+    kubectl 이 읽을 수 없으면 파일을 삭제한 뒤 aws eks update-kubeconfig 만 수행한다.
+    kubectl/terraform/aws 가 없는 CI에서는 false.
+  EOT
+  type        = bool
+  default     = true
+}
+
 variable "install_keda" {
   description = "true: terraform helm_release 로 KEDA operator 설치. run_k8s_bootstrap 시 kubectl 로 k8s/keda 적용(ScaledObject paused·오토스케일 끔)."
   type        = bool

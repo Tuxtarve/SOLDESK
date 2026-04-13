@@ -18,6 +18,7 @@ fi
 NS="${TICKETING_NAMESPACE:-ticketing}"
 CM="${TICKETING_CONFIGMAP_NAME:-ticketing-config}"
 WORKER="${WORKER_DEPLOYMENT_NAME:-worker-svc}"
+WORKER_UI="${WORKER_UI_DEPLOYMENT_NAME:-worker-svc-ui}"
 READ_API="${READ_API_DEPLOYMENT_NAME:-read-api}"
 WRITE_API="${WRITE_API_DEPLOYMENT_NAME:-write-api}"
 INGRESS_NAME="${K8S_INGRESS_NAME:-ticketing-ingress}"
@@ -44,7 +45,11 @@ else
 fi
 
 echo "=== post_apply_k8s_bootstrap: kubeconfig ($EKS_CLUSTER_NAME) ==="
-aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION"
+unset KUBECONFIG 2>/dev/null || true
+_TMP_KUBECONFIG="$(mktemp)"
+export KUBECONFIG="$_TMP_KUBECONFIG"
+trap 'rm -f "$_TMP_KUBECONFIG"' EXIT
+aws eks update-kubeconfig --name "$EKS_CLUSTER_NAME" --region "$AWS_REGION" --kubeconfig "$_TMP_KUBECONFIG"
 
 export DB_PASSWORD
 echo "=== apply-secrets-from-terraform ==="
@@ -71,6 +76,7 @@ kubectl apply -k "$tmp_k8s/k8s" -n "$NS"
 kubectl -n "$NS" set image deploy/"$READ_API" "read-api=${WAS_IMAGE}" >/dev/null
 kubectl -n "$NS" set image deploy/"$WRITE_API" "write-api=${WAS_IMAGE}" >/dev/null
 kubectl -n "$NS" set image deploy/"$WORKER" "worker-svc=${WORKER_IMAGE}" >/dev/null
+kubectl -n "$NS" set image deploy/"$WORKER_UI" "worker-svc=${WORKER_IMAGE}" >/dev/null 2>&1 || true
 
 kubectl -n "$NS" annotate sa sqs-access-sa "eks.amazonaws.com/role-arn=${SQS_ROLE_ARN}" --overwrite >/dev/null 2>&1 || true
 
@@ -84,10 +90,10 @@ if [[ "${INSTALL_KEDA:-1}" != "0" ]]; then
     sleep 5
   done
   kubectl wait --for=condition=established "crd/scaledobjects.keda.sh" --timeout=120s 2>/dev/null || true
-  sed -i "s|awsRegion: ap-northeast-2|awsRegion: ${AWS_REGION}|" "$tmp_k8s/k8s/keda/scaledobject-worker-svc.yaml"
-  echo "=== kubectl apply -k k8s/keda (ScaledObject paused) ==="
+  echo "=== kubectl apply -k k8s/keda (TriggerAuthentication 등) ==="
   kubectl apply -k "$tmp_k8s/k8s/keda"
 fi
+echo "=== KEDA ScaledObject 유지 (paused 기본, 필요 시 scripts/worker-autoscale-on.sh 로 unpause) ==="
 
 if [[ "${SYNC_S3_ENDPOINTS:-0}" == "1" ]]; then
   echo "=== sync S3 api-origin.js from Ingress (same apply, no second terraform) ==="
@@ -98,6 +104,7 @@ echo "=== patch configmap + rollouts ==="
 kubectl -n "$NS" patch cm "$CM" --type merge -p "{\"data\":{\"DB_NAME\":\"${DB_SCHEMA_NAME}\"}}" || true
 kubectl -n "$NS" patch cm "$CM" --type merge -p "{\"data\":{\"AWS_REGION\":\"$AWS_REGION\"}}" || true
 kubectl -n "$NS" rollout restart deploy/"$WORKER" || true
+kubectl -n "$NS" rollout restart deploy/"$WORKER_UI" || true
 kubectl -n "$NS" rollout restart deploy/"$READ_API" || true
 kubectl -n "$NS" rollout restart deploy/"$WRITE_API" || true
 

@@ -4,10 +4,10 @@
 # terraform apply 끝의 post_apply_k8s_bootstrap 에서 호출 — 두 번째 apply 없이 브라우저용 API 오리진 확정.
 set -euo pipefail
 
+_self="${BASH_SOURCE[0]:-$0}"
 if [[ -n "${REPO_ROOT:-}" ]]; then
   ROOT_DIR="$(cd "${REPO_ROOT}" && pwd)"
 else
-  _self="${BASH_SOURCE[0]:-$0}"
   ROOT_DIR="$(cd "$(dirname "${_self}")/../.." && pwd)"
 fi
 TF_DIR="$ROOT_DIR/terraform"
@@ -19,6 +19,12 @@ if [[ -z "${AWS_REGION}" ]]; then
   exit 1
 fi
 export AWS_DEFAULT_REGION="${AWS_DEFAULT_REGION:-$AWS_REGION}"
+
+_KS_DIR="$(cd "$(dirname "${_self}")" && pwd)"
+if ! kubectl config view >/dev/null 2>&1; then
+  echo "WARN: kubeconfig 손상/없음 — refresh_kubeconfig.sh 실행" >&2
+  bash "${_KS_DIR}/refresh_kubeconfig.sh"
+fi
 
 NAMESPACE="${TICKETING_NAMESPACE:-${TICKETING_NS:-ticketing}}"
 INGRESS_NAME="${INGRESS_NAME:-ticketing-ingress}"

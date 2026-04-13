@@ -121,7 +121,12 @@ module "eks" {
   subnet_ids              = module.network.public_subnet_ids
   security_group_id       = module.network.eks_sg_id
   cluster_name            = var.eks_cluster_name
-  sqs_queue_arns          = [module.sqs.reservation_queue_arn, module.sqs.reservation_dlq_arn]
+  sqs_queue_arns = [
+    module.sqs.reservation_queue_arn,
+    module.sqs.reservation_dlq_arn,
+    module.sqs.reservation_interactive_queue_arn,
+    module.sqs.reservation_interactive_dlq_arn,
+  ]
   app_node_instance_types = var.eks_app_node_instance_types
   app_node_desired_size   = var.eks_app_node_desired_size
   app_node_min_size       = var.eks_app_node_min_size
@@ -182,6 +187,8 @@ resource "aws_iam_role_policy" "eks_node_sqs" {
       Resource = [
         module.sqs.reservation_queue_arn,
         module.sqs.reservation_dlq_arn,
+        module.sqs.reservation_interactive_queue_arn,
+        module.sqs.reservation_interactive_dlq_arn,
       ]
     }]
   })

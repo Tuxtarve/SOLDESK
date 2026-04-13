@@ -29,7 +29,7 @@ kubectl -n ticketing exec -it tools-once -- sh -c 'cd /work/ticketing-db/terrafo
 
 kubectl -n ticketing exec -it tools-once -- sh -c 'cd /work/ticketing-db/terraform && python3 ../scripts/sqs_load_real_concert.py -n 100'
 
-kubectl -n ticketing exec -it tools-once -- sh -c "export WRITE_API_BASE_URL='$WRITE_API_BASE_URL' && cd /work/ticketing-db/terraform && python3 ../scripts/sqs_load_real_concert.py -n 3000 --spread-users 3000 --also-via-was"
+kubectl -n ticketing exec -it tools-once -- sh -c "export WRITE_API_BASE_URL='$WRITE_API_BASE_URL' && cd /work/ticketing-db/terraform && python3 ../scripts/sqs_load_real_concert.py -n 10000 --spread-users 10000"
 
 kubectl -n ticketing exec -it tools-once -- sh -c "export WRITE_API_BASE_URL='$WRITE_API_BASE_URL' && cd /work/ticketing-db/terraform && python3 ../scripts/sqs_load_real_concert.py -n 20 --via-was"
 

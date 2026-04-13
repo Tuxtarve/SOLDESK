@@ -1,0 +1,24 @@
+AWS_REGION="$(terraform output -raw aws_region)"
+EKS_NAME="$(terraform output -raw eks_cluster_name)"
+RDS_HOST="$(terraform output -raw rds_writer_endpoint)"
+
+aws eks update-kubeconfig --region "$AWS_REGION" --name "$EKS_NAME"
+kubectl get ns ticketing >/dev/null 2>&1 || kubectl create ns ticketing
+
+kubectl -n ticketing delete pod rds-bastion --ignore-not-found
+kubectl -n ticketing run rds-bastion --restart=Never --image=alpine:3.20 -- \
+  sh -lc "apk add --no-cache socat >/dev/null && socat TCP-LISTEN:3306,fork,reuseaddr TCP:${RDS_HOST}:3306"
+
+kubectl -n ticketing wait --for=condition=Ready pod/rds-bastion --timeout=120s
+
+VM_IP="$(hostname -I | awk '{print $1}')"
+echo "VM_IP=$VM_IP"
+echo "Now run this on Windows PowerShell:"
+echo "Test-NetConnection -ComputerName $VM_IP -Port 13306"
+
+kubectl -n ticketing port-forward --address 0.0.0.0 pod/rds-bastion 13306:3306
+
+
+--------------------------------------------------------------------
+
+ssh -N -L 13306:127.0.0.1:13306 root@192.168.10.11

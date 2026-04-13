@@ -1,0 +1,43 @@
+# 클러스터 범위: 노드/리소스 경쟁 시 사용자 경로(write/read/UI 워커)가 bulk 워커보다 먼저 스케줄·유지.
+# 1번(버스트 소비) + 2번(적체와 신규 요청 격리) 중 2번의 스케줄링 층.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: ticketing-priority-write-api
+value: 200000
+globalDefault: false
+description: "예매 접수 write-api — 최우선"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: ticketing-priority-read-api
+value: 190000
+globalDefault: false
+description: "조회 read-api"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: ticketing-priority-worker-ui
+value: 100000
+globalDefault: false
+description: "GUI 큐(worker-svc-ui) — bulk 워커보다 우선"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: ticketing-priority-worker-bulk
+value: 10000
+globalDefault: false
+description: "bulk 큐(worker-svc) — 부하 적체 전용, 가장 후순위"
+---
+# tools-once, rds-bastion 등: 평시 스케줄 슬롯을 덜 잡아먹도록 requests 는 작게 두고,
+# 노드가 꽉 찼을 때만 bulk(10000) 보다 높아 선점 가능 — read/write/UI 워커(그보다 높음)는 건드리지 않음.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: ticketing-priority-ops
+value: 50000
+globalDefault: false
+description: "일회성 도구·DB 터널 — bulk 워커보다만 우선"

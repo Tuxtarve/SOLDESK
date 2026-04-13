@@ -5,8 +5,8 @@ metadata:
   labels:
     app: worker-svc
 spec:
-  # SQS FIFO는 여러 consumer가 서로 다른 MessageGroupId를 병렬 소비 가능. 부하 시 2~5로 확장 검토.
-  replicas: 1
+  # SQS FIFO bulk 큐. KEDA ScaledObject(worker-svc-sqs)가 레플리카를 조정한다.
+  replicas: 0
   selector:
     matchLabels:
       app: worker-svc
@@ -15,6 +15,33 @@ spec:
       labels:
         app: worker-svc
     spec:
+      priorityClassName: ticketing-priority-worker-bulk
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - read-api
+                        - write-api
+                topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: worker-svc
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: worker-svc
       serviceAccountName: sqs-access-sa
       containers:
         - name: worker-svc
@@ -27,10 +54,15 @@ spec:
                 name: ticketing-config
             - secretRef:
                 name: ticketing-secrets
+          env:
+            # RDS 동시 커넥션·락 완화(파드당). 배치 스레드보다 작으면 대기.
+            - name: WORKER_DB_MAX_CONCURRENT
+              value: "5"
+          # requests 는 낮게: 평시 노드에 여유(도구 Pod·버스트)를 남김. 피크는 limits·레플리카로 확장.
           resources:
             requests:
-              memory: "128Mi"
-              cpu: "100m"
+              memory: "96Mi"
+              cpu: "50m"
             limits:
               memory: "256Mi"
               cpu: "300m"

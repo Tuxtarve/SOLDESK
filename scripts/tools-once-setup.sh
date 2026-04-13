@@ -37,12 +37,20 @@ metadata:
   name: ${POD}
   namespace: ${NS}
 spec:
+  priorityClassName: ticketing-priority-ops
   serviceAccountName: sqs-access-sa
   restartPolicy: Never
   containers:
     - name: tools
       image: python:3.12-slim
       command: ["/bin/sh", "-c", "tail -f /dev/null"]
+      resources:
+        requests:
+          cpu: "25m"
+          memory: "64Mi"
+        limits:
+          cpu: "1"
+          memory: "1Gi"
       envFrom:
         - configMapRef:
             name: ticketing-config
@@ -71,4 +79,5 @@ if [ "$i" -ge "$max" ]; then
 fi
 
 _sync_scripts
+kubectl -n "$NS" exec "$POD" -- python -m pip install -q --upgrade "pip>=26,<27"
 kubectl -n "$NS" exec "$POD" -- pip install -q boto3 pymysql redis

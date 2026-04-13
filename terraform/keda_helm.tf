@@ -25,8 +25,10 @@ resource "helm_release" "keda" {
   create_namespace = true
   version          = "2.15.2"
 
-  wait    = true
-  timeout = 600
+  # Avoid terraform destroy hanging on helm uninstall.
+  # We still prefer a clean uninstall, but we don't want the whole destroy to block indefinitely.
+  wait    = false
+  timeout = 180
 
   values = [
     yamlencode({

@@ -103,6 +103,30 @@
   font-size: 13px;
 }
 
+/* Paging controls: styles live here (not theaters_main.css) so concert-only visitors still get layout under load spikes. */
+.concert-seat-nav-btn {
+  flex-shrink: 0;
+  height: 36px;
+  padding: 0 14px;
+  border: 1px solid #c8c8c8;
+  background: #fff;
+  border-radius: 6px;
+  font-size: 14px;
+  font-family: inherit;
+  cursor: pointer;
+  color: #222;
+  box-sizing: border-box;
+}
+
+.concert-seat-nav-btn:hover:not(:disabled) {
+  border-color: #111;
+}
+
+.concert-seat-nav-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 /* Wider, less "compressed" look for concert bookings */
 .theaters-detail-overlay.is-large-venue .theaters-detail-shell {
   width: min(1120px, 100%);

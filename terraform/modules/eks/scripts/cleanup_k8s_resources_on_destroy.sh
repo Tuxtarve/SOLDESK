@@ -10,7 +10,11 @@ echo "=== Cleaning up Kubernetes-managed AWS resources before EKS destroy ==="
 
 if [ -n "$CLUSTER_NAME" ] && [ -n "$REGION" ]; then
   if aws eks describe-cluster --name "$CLUSTER_NAME" --region "$REGION" >/dev/null 2>&1; then
-    aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$REGION" 2>/dev/null || true
+    unset KUBECONFIG 2>/dev/null || true
+    _TMP_KUBECONFIG="$(mktemp)"
+    export KUBECONFIG="$_TMP_KUBECONFIG"
+    trap 'rm -f "$_TMP_KUBECONFIG"' EXIT
+    aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$REGION" --kubeconfig "$_TMP_KUBECONFIG" 2>/dev/null || true
 
     kubectl delete ingress --all --all-namespaces --timeout=120s 2>/dev/null || true
 

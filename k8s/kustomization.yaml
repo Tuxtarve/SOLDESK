@@ -2,14 +2,18 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 
 resources:
+  - priorityclass-ticketing.yaml
   - configmap.yaml
   - sqs-service-account.yaml
+  - pdb-user-facing.yaml
   - read-api/deployment.yaml
   - read-api/service.yaml
   - write-api/deployment.yaml
   - write-api/service.yaml
   - worker-svc/deployment.yaml
   - worker-svc/service.yaml
+  - worker-svc-ui/deployment.yaml
+  - worker-svc-ui/service.yaml
   - ingress.yaml
 
 images:

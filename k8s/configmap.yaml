@@ -1,3 +1,5 @@
+# 운영 모델: (1)(2) bulk/ui 큐 분리 + KEDA ScaledObject(worker-svc-sqs)로 worker-svc 레플리카 자동 조정.
+# (3) priorityclass-ticketing.yaml — 스케줄 우선순위. (4) pdb-user-facing — drain 시 사용자 경로 최소 가용.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -34,6 +36,12 @@ data:
   # 공연 목록·상세 Redis TTL(초). 0=만료 없음. 대규모 오픈 시 목록만 300~600 등 검토.
   CONCERTS_LIST_CACHE_TTL_SEC: "0"
   CONCERT_DETAIL_CACHE_TTL_SEC: "0"
+  # SQS: write-api 는 Secret 의 SQS_QUEUE_INTERACTIVE_URL 로 오버라이드(ticketing-reservation-ui.fifo).
+  # 부하 스크립트·tools-once 기본은 Secret SQS_QUEUE_URL = ticketing-reservation.fifo (bulk).
+  # OFF/ON 라우팅: ui=모든 커밋을 UI 큐로(= svc-ui 1개만 처리, 느림), bulk=bulk 큐로(= 분산, 빠름)
+  BOOKING_QUEUE_MODE: "ui"
+  # 워커 합산 상한(레거시). 현재 worker-svc 오토스케일은 KEDA로 수행한다.
+  WORKER_FLEET_TOTAL_MAX: "5"
   # SQS (write-api sqs_client + worker-svc 공통 boto 재시도)
   SQS_BOTO_MAX_ATTEMPTS: "5"
   SQS_BOTO_RETRY_MODE: "adaptive"
@@ -43,7 +51,8 @@ data:
   SQS_RECEIVE_MAX_MESSAGES: "10"
   # 배치로 받은 메시지를 동시에 처리(그룹당 최대 1개/Receive이므로 순서 안전). GUI 대기 단축.
   WORKER_SQS_BATCH_CONCURRENCY: "10"
-  SQS_WAIT_TIME_SECONDS: "20"
+  # Long poll 최대 대기(초). 20→8: 큐 소진 구간에서 배치 간 텀 단축(유휴 시 SQS API 호출은 늘어남).
+  SQS_WAIT_TIME_SECONDS: "8"
   SQS_POLL_ERROR_BACKOFF_SEC: "3"
   # SQS 수락 후 폴링용 Redis queued 키 TTL(초). 큐 적체 시각보다 길게 두는 것이 안전.
   BOOKING_QUEUED_TTL_SEC: "7200"

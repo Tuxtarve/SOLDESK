@@ -1,7 +1,8 @@
 """
 콘서트 예매 쓰기 — SQS FIFO 통합 버전.
-원본: _ShowLockPool(threading.Lock) → SQS FIFO MessageGroupId=show_id.
-      유저별 그룹(show_id-user_id)으로 분리해 동일 회차라도 타 유저 대량 적체에 GUI 예매가 묻히지 않게 함(DB는 FOR UPDATE 로 좌석 정합성 유지).
+MessageGroupId=show_id-user_id 로 유저별 FIFO 파이프를 나눠, 동일 회차 대량 적체 시에도
+다른 유저 요청이 한 그룹에 묶이지 않게 한다. 실제 좌석·잔여 정합성은 워커(DB)에서
+좌석 유니크 + 원자적 잔여 UPDATE 로 처리한다.
 """
 import json
 import secrets

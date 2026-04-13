@@ -18,12 +18,23 @@ output "elasticache_primary_endpoint" {
   sensitive = true
 }
 
+# 부하 테스트·스크립트 기본 큐 (ticketing-reservation.fifo)
 output "sqs_queue_url" {
   value = module.sqs.reservation_queue_url
 }
 
+# write-api·GUI 예매 전용 (ticketing-reservation-ui.fifo) — worker-svc-ui 가 소비
+output "sqs_interactive_queue_url" {
+  value = module.sqs.reservation_interactive_queue_url
+}
+
 output "eks_cluster_name" {
   value = module.eks.cluster_name
+}
+
+output "eks_app_node_group_name" {
+  value       = module.eks.app_node_group_name
+  description = "App EKS managed node group (read/write nodes)."
 }
 
 output "vpc_id" {

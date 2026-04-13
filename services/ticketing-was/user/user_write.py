@@ -73,20 +73,9 @@ def _refund_movie_booking(user_id: int, booking_id: int):
             )
 
             cur.execute(
-                "DELETE FROM booking_seats WHERE booking_id = %s",
+                "UPDATE booking_seats SET status = 'CANCEL' WHERE booking_id = %s AND status = 'ACTIVE'",
                 (booking_id,),
             )
-
-            if schedule_id > 0 and reg_count > 0:
-                cur.execute(
-                    "UPDATE schedules SET remain_count = remain_count + %s WHERE schedule_id = %s",
-                    (reg_count, schedule_id),
-                )
-                cur.execute(
-                    "UPDATE schedules SET status = 'OPEN' "
-                    "WHERE schedule_id = %s AND UPPER(COALESCE(status, '')) = 'CLOSED'",
-                    (schedule_id,),
-                )
 
         conn.commit()
     except Exception as exc:
@@ -157,20 +146,9 @@ def _refund_concert_booking(user_id: int, booking_id: int):
             )
 
             cur.execute(
-                "DELETE FROM concert_booking_seats WHERE booking_id = %s",
+                "UPDATE concert_booking_seats SET status = 'CANCEL' WHERE booking_id = %s AND status = 'ACTIVE'",
                 (booking_id,),
             )
-
-            if show_id > 0 and reg_count > 0:
-                cur.execute(
-                    "UPDATE concert_shows SET remain_count = remain_count + %s WHERE show_id = %s",
-                    (reg_count, show_id),
-                )
-                cur.execute(
-                    "UPDATE concert_shows SET status = 'OPEN' "
-                    "WHERE show_id = %s AND UPPER(COALESCE(status, '')) = 'CLOSED'",
-                    (show_id,),
-                )
 
         conn.commit()
     except Exception as exc:

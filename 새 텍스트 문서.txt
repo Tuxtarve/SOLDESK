@@ -1,0 +1,35 @@
+kubectl get pods -n ticketing
+kubectl get ingress -n ticketing
+
+
+bash ../scripts/delete.sh
+
+bash ../scripts/img.sh
+
+bash ../scripts/worker-autoscale-on.sh
+
+bash ../scripts/worker-autoscale-off.sh
+
+kubectl -n ticketing rollout restart deploy/worker-svc
+kubectl -n ticketing rollout restart deploy/read-api
+kubectl -n ticketing rollout restart deploy/write-api
+
+
+kubectl -n ticketing exec -it tools-once -- sh -lc '
+cd /work/ticketing-db/terraform &&
+WRITE_API_BASE_URL="http://write-api.ticketing.svc.cluster.local:5001" \
+python3 ../scripts/sqs_load_real_concert.py -n 10000 --spread-users 10000 --via-was'
+
+
+
+kubectl -n ticketing exec -it tools-once -- sh -lc '
+cd /work/ticketing-db/terraform &&
+WRITE_API_BASE_URL="http://write-api.ticketing.svc.cluster.local:5001" \
+python3 ../scripts/sqs_load_real_concert.py -n 30000 --spread-users 30000 --via-was --http-poll --poll-sec 120'
+
+
+
+전체 파드 조회
+watch -n 2 'kubectl -n ticketing get deploy read-api write-api worker-svc worker-svc-ui -o wide'
+워커만 조회
+ watch -n 2 'kubectl get pods -n ticketing -l "app in (worker-svc,worker-svc-ui)"'
