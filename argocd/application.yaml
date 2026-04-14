@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: ticketing
+  namespace: argocd
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/sxk34/soldesk.git
+    targetRevision: 개인실험실
+    path: k8s
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: ticketing
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: false  # 터미널에서 수동 변경한 게 유지되도록 OFF. 켜려면 true
+    syncOptions:
+      - CreateNamespace=true
+      - ServerSideApply=true
