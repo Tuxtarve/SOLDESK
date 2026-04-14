@@ -19,6 +19,8 @@ import pymysql
 import time
 import threading
 from botocore.config import Config
+from fastapi.responses import PlainTextResponse
+
 
 logging.basicConfig(level="INFO", format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("worker-svc")
@@ -679,20 +681,60 @@ async def lifespan(app):
 app = FastAPI(lifespan=lifespan)
 
 
+# ✅ 헬스 체크 (서비스 정상 여부 확인)
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "worker-svc"}
+    data = _stats.snapshot()
+    return {
+        "status": "ok",
+        "service": "worker-svc",
+        "uptime_sec": data["uptime_sec"]  # 서비스 실행 시간
+    }
 
 
+# ✅ readiness 체크 (K8s에서 트래픽 받을 준비 여부 판단)
+@app.get("/ready")
+def ready():
+    if not SQS_QUEUE_URL:
+        return {"status": "fail", "reason": "SQS 설정 안됨"}
+    return {"status": "ready"}
+
+
+# ✅ Prometheus 메트릭 (핵심🔥)
 @app.get("/metrics")
 def metrics():
-    """
-    데모/운영 관측용 JSON 메트릭.
-    - 처리량(TPS)은 외부에서 5~10초 간격으로 diff를 내면 됨.
-    - DB 세마포어 대기(avg/max)가 올라가면 DB 동시성/인덱스/경합 이슈 신호.
-    """
-    return _stats.snapshot()
+    data = _stats.snapshot()
 
+    return PlainTextResponse(
+"""# HELP worker_processed_ok 성공적으로 처리된 메시지 총 개수
+# TYPE worker_processed_ok counter
+worker_processed_ok {data['process']['ok']}
+
+# HELP worker_processed_fail 처리 실패한 메시지 총 개수
+# TYPE worker_processed_fail counter
+worker_processed_fail {data['process']['fail']}
+
+# HELP worker_inflight_messages 현재 처리 중인 메시지 수
+# TYPE worker_inflight_messages gauge
+worker_inflight_messages {data['sqs']['inflight_est']}
+
+# HELP worker_sqs_received_total SQS에서 받은 총 메시지 수
+# TYPE worker_sqs_received_total counter
+worker_sqs_received_total {data['sqs']['received']}
+
+# HELP worker_sqs_acked_total 처리 완료 후 ACK된 메시지 수
+# TYPE worker_sqs_acked_total counter
+worker_sqs_acked_total {data['sqs']['acked']}
+
+# HELP worker_handle_latency_ms 평균 처리 시간(ms)
+# TYPE worker_handle_latency_ms gauge
+worker_handle_latency_ms {data['process']['avg_handle_ms']}
+
+# HELP worker_db_wait_ms DB 세마포어 대기 평균 시간(ms)
+# TYPE worker_db_wait_ms gauge
+worker_db_wait_ms {data['process']['avg_db_sem_wait_ms']}
+"""
+)
 
 if __name__ == "__main__":
     import uvicorn

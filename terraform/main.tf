@@ -134,6 +134,16 @@ module "eks" {
   depends_on              = [module.network]
 }
 
+module "monitoring" {
+  source = "./modules/monitoring"
+
+  cluster_name           = module.eks.cluster_name
+  cluster_endpoint       = module.eks.cluster_endpoint
+  cluster_ca_certificate = module.eks.cluster_ca_certificate
+
+  depends_on = [module.eks]
+}
+
 module "s3_hosting_v2" {
   source     = "./modules/s3_hosting"
   aws_region = var.aws_region
