@@ -23,6 +23,19 @@ cat >"$VALUES" <<'EOF'
 configs:
   params:
     server.insecure: true
+  cm:
+    # 기본 admin 계정 비활성화, root 계정 신설
+    admin.enabled: "false"
+    accounts.root: "login"
+  rbac:
+    # root에게 admin 권한 부여
+    policy.csv: |
+      g, root, role:admin
+    policy.default: ""
+  secret:
+    extra:
+      # bcrypt(soldesk1.) — argocd account bcrypt --password 'soldesk1.'로 생성
+      accounts.root.password: "$2a$10$0Sn244C61FveDwgHGeC2qe/8TAcl7j6NN2MpQe9rDSFZwYp1sk4i6"
 server:
   service:
     type: ClusterIP
