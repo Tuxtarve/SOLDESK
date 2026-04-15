@@ -17,7 +17,7 @@ spec:
   syncPolicy:
     automated:
       prune: true
-      selfHeal: false  # 터미널에서 수동 변경한 게 유지되도록 OFF. 켜려면 true
+      selfHeal: true  # git을 단일 진실로 강제 — 수동 kubectl 변경은 수 초 내 원복
     syncOptions:
       - CreateNamespace=true
       - ServerSideApply=true
