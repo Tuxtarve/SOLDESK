@@ -1,0 +1,41 @@
+global:
+  # 1. 감지 속도 향상: 15s -> 5s (티켓팅 오픈 직후 3~5초가 승부처야)
+  scrape_interval: 5s 
+  evaluation_interval: 5s
+  external_labels:
+    env: 'practice'
+    region: 'ap-northeast-2'
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ['alertmanager:9093']
+
+rule_files:
+  - "/etc/prometheus/rules/ticketing-rules-test.yml" # 알람 규칙 파일 연결
+
+scrape_configs:
+  # ① EC2 자체 메트릭 (모니터링 서버 자원 감시)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  # ② AWS 서비스 메트릭 (RDS, SQS, ElastiCache)
+  - job_name: 'cloudwatch-exporter'
+    static_configs:
+      - targets: ['cloudwatch-exporter:9106']
+    scrape_interval: 30s # CloudWatch는 비용 때문에 30~60초가 적당해.
+
+  # ③ Redis 메트릭 (2팀 핵심: 캐시 히트율/커넥션 감시)
+  - job_name: 'redis-exporter'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+
+  # ④ EKS 서비스 (티켓팅 핵심: 5초 주기로 정밀 스캔)
+  - job_name: 'ticketing-services-test'
+    scrape_interval: 5s
+    metrics_path: '/metrics'
+    static_configs:
+      - targets: 
+          - '${EKS_ALB_DNS}:80'
+    # 2. 팁: 서비스별로 job을 나누기보다 라벨로 구분하면 그라파나 대시보드 그리기가 더 쉬워져.

@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: event-svc
+  namespace: ticketing-was
+  labels:
+    app: event-svc
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: event-svc
+  template:
+    metadata:
+      labels:
+        app: event-svc
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: "/metrics"
+    spec:
+      terminationGracePeriodSeconds: 30
+
+      containers:
+        - name: event-svc
+          image: 032098305878.dkr.ecr.ap-northeast-2.amazonaws.com/event-svc:latest
+          imagePullPolicy: Always
+
+          ports:
+            - containerPort: 3000
+
+          env:
+            # 기본
+            - name: AWS_REGION
+              value: "ap-northeast-2"
+
+            # 🔥 DB 연결 (필수)
+            - name: DB_HOST
+              value: "👉여기에_RDS_writer_endpoint_넣기"
+            - name: DB_PORT
+              value: "3306"
+            - name: DB_USER
+              value: "admin"
+            - name: DB_PASSWORD
+              value: "👉RDS_비밀번호"
+            - name: DB_NAME
+              value: "ticketing"
+
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"

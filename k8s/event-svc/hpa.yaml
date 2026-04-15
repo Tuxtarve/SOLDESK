@@ -1,0 +1,30 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: event-svc-hpa
+  namespace: ticketing-was   # ✅ 통일
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: event-svc
+
+  minReplicas: 1   # ✅ 안정화 단계
+  maxReplicas: 5   # ✅ 처음엔 작게 시작
+
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 60   # ✅ 너무 공격적이지 않게
+
+  behavior:
+    scaleUp:
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30   # ✅ 너무 빠르면 튀니까 완화
+    scaleDown:
+      stabilizationWindowSeconds: 120

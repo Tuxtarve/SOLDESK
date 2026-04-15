@@ -1,0 +1,109 @@
+groups:
+  - name: ticketing-critical
+    rules:
+
+      # 예매 에러율 5% 초과
+      - alert: HighReservationErrorRate
+        expr: |
+          rate(reservation_requests_total{status="error"}[5m])
+          / rate(reservation_requests_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "예매 에러율 {{ $value | humanizePercentage }} 초과"
+          description: "5분간 예매 에러율이 5%를 넘었습니다."
+
+      # SQS 큐 적체 500개 초과
+      - alert: SQSQueueBacklog
+        expr: aws_sqs_approximate_number_of_messages_visible_maximum > 500
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "SQS 큐 적체 {{ $value }}개"
+          description: "예매 큐에 메시지가 500개 이상 쌓였습니다. worker-svc를 확인하세요."
+
+      # 서비스 /healthz 응답 실패 (Pod 비정상)
+      - alert: ServiceHealthCheckFailed
+        expr: up{job=~"event-svc|reserv-svc|worker-svc"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.job }} 헬스체크 실패"
+          description: "서비스가 응답하지 않습니다. Pod 상태를 확인하세요."
+
+  - name: ticketing-warning
+    rules:
+
+      # RDS Read Replica 지연 5초 초과
+      - alert: RDSReplicaLagHigh
+        expr: aws_rds_replica_lag_average > 5
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Read Replica 지연 {{ $value }}초"
+          description: "쓰기 부하가 높거나 네트워크 이슈 가능성이 있습니다."
+
+      # Redis 메모리 75% 초과
+      - alert: RedisMemoryHigh
+        expr: aws_elasticache_database_memory_usage_percentage_average > 75
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Redis 메모리 {{ $value }}% 사용중"
+          description: "캐시 eviction이 발생할 수 있습니다."
+
+      # RDS CPU 80% 초과
+      - alert: RDSHighCPU
+        expr: aws_rds_cpuutilization_average > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "RDS CPU {{ $value }}%"
+          description: "DB 쿼리 최적화 또는 스케일업이 필요할 수 있습니다."
+
+      # EC2 모니터링 서버 CPU 70% 초과
+      - alert: MonitoringEC2HighCPU
+        expr: 100 - (avg by(instance)(rate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 70
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "모니터링 서버 CPU {{ $value }}%"
+
+      # DLQ에 메시지 진입 (예매 3회 실패)
+      - alert: DLQMessageReceived
+        expr: aws_sqs_approximate_number_of_messages_visible_maximum{queue_name=~".*dlq.*"} > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "DLQ에 실패 메시지 {{ $value }}개"
+          description: "예매 처리가 3회 실패한 메시지가 있습니다. 수동 확인 필요."
+
+      # 예매 처리 p99 응답시간 1초 초과
+      - alert: ReservationSlowResponse
+        expr: histogram_quantile(0.99, rate(reservation_duration_ms_bucket[5m])) > 1000
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "예매 처리 p99 {{ $value }}ms"
+          description: "예매 응답이 느립니다. Redis 또는 SQS 상태를 확인하세요."
+       # WAS Pod CPU 부하 감지 (HPA 연동 확인용)
+      - alert: WASHighCPU_HPA_Trigger
+        expr: |
+          sum(rate(container_cpu_usage_seconds_total{container=~"event-svc|reserv-svc|worker-svc"}[1m])) by (pod)
+          / sum(container_spec_cpu_quota{container=~"event-svc|reserv-svc|worker-svc"}/100000) by (pod) * 100 > 50
+        for: 30s  # 티켓팅은 2분이 아니라 30초만 유지되어도 바로 비상이야!
+        labels:
+          severity: critical
+          action: "auto-scaling-check"
+        annotations:
+          summary: "Pod CPU {{ $value }}% 돌파 (임계치 50% 초과)"
+          description: "HPA가 파드를 증설 중인지 확인하세요. 현재 부하가 스파이크 구간입니다."
