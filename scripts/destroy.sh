@@ -11,6 +11,11 @@ set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT/terraform"
 
+# db_password는 variables.tf에서 default 없이 required로 선언되어 있어, destroy
+# 조차도 var 값을 요구한다. destroy는 실제로 그 값을 쓰지 않으므로 호출자가
+# 안 넣은 경우 더미 값을 자동 주입한다 (apply 시에는 여전히 외부에서 명시해야 함).
+export TF_VAR_db_password="${TF_VAR_db_password:-destroy-dummy}"
+
 MAX_RETRIES=4
 REGION=$(terraform output -raw aws_region 2>/dev/null || echo "ap-northeast-2")
 
