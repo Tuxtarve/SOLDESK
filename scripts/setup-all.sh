@@ -228,23 +228,11 @@ echo " [5/8] ticketing 앱 배포"
 echo "=========================================="
 bash "$SCRIPTS/apply-ticketing-k8s.sh"
 
-# ── 5.5. KEDA ScaledObject 적용 (worker-svc SQS 스케일링) ──
-echo ""
-echo "=========================================="
-echo " [5.5/8] KEDA ScaledObject 적용"
-echo "=========================================="
-SQS_QUEUE_URL="$(terraform output -raw sqs_queue_url)"
-AWS_REGION="$(terraform output -raw aws_region)"
-export SQS_QUEUE_URL AWS_REGION
-
-# 템플릿 → 실제 매니페스트 (envsubst로 ${SQS_QUEUE_URL}, ${AWS_REGION} 치환)
-envsubst < "$ROOT/k8s/keda/worker-svc-scaledobject.yaml.tmpl" \
-  | kubectl apply -f -
-echo "ScaledObject 적용 완료 (queue=$SQS_QUEUE_URL)"
-
-# KEDA가 HPA를 자동 생성할 때까지 잠깐 대기
+# KEDA ScaledObject는 이제 k8s/kustomization.yaml에 포함되어
+# step 5의 apply-ticketing-k8s.sh → kubectl apply -k 에서 함께 적용됨.
+# 큐 URL / region이 git에 박혀 있어 envsubst 불필요.
 sleep 5
-kubectl get scaledobject -n ticketing
+kubectl get scaledobject -n ticketing 2>&1 || true
 kubectl get hpa -n ticketing | grep keda || true
 
 # ── 6. DB 스키마 초기화 ──

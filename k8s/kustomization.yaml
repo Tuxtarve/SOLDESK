@@ -13,6 +13,7 @@ resources:
   - reserv-svc/hpa.yaml
   - worker-svc/deployment.yaml
   - worker-svc/service.yaml
+  - keda/worker-svc-scaledobject.yaml
   - ingress.yaml
 
 # 배포 시 실제 ECR 레지스트리로 이미지 경로를 덮어씀

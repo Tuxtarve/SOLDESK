@@ -1,5 +1,7 @@
 # KEDA ScaledObject — worker-svc를 SQS 큐 길이 기반으로 자동 스케일링
-# 템플릿: ${SQS_QUEUE_URL}, ${AWS_REGION}은 setup-all.sh에서 envsubst로 치환됨
+# queueURL과 awsRegion은 GitOps 일원화를 위해 git에 하드코딩.
+# 민감정보가 아닌 infra 식별자라 ECR 레지스트리/account id가 kustomization.yaml에
+# 박혀있는 것과 동일한 정책.
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
@@ -47,9 +49,9 @@ spec:
   triggers:
     - type: aws-sqs-queue
       metadata:
-        queueURL: ${SQS_QUEUE_URL}
+        queueURL: https://sqs.ap-northeast-2.amazonaws.com/734772058616/ticketing-reservation.fifo
         # pod당 처리 목표 메시지 수 — 큐에 90개면 pod 3개로 확장
         queueLength: "30"
-        awsRegion: ${AWS_REGION}
+        awsRegion: ap-northeast-2
         # KEDA operator의 IRSA(IAM role) 사용
         identityOwner: operator
