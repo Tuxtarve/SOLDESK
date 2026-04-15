@@ -84,11 +84,7 @@ if [[ -f "$INGRESS_MANIFEST" ]]; then
   kubectl apply -f "$INGRESS_MANIFEST"
 fi
 
-# ── admin 비밀번호 + 접속 안내 ────────────────────────────────────
-ADMIN_PW=$(kubectl -n "$NAMESPACE" get secret argocd-initial-admin-secret \
-  -o jsonpath="{.data.password}" 2>/dev/null | base64 -d || echo "")
-
-# ALB 주소 대기 (ALB Controller가 internet-facing ALB 프로비저닝까지 2~3분)
+# ── ALB 주소 대기 (ALB Controller가 internet-facing ALB 프로비저닝까지 2~3분) ─
 echo "ArgoCD UI ALB 주소 대기 중..."
 ARGOCD_UI_HOST=""
 for i in $(seq 1 30); do
@@ -112,8 +108,9 @@ UI 접속:
   → http://localhost:8080
 
 로그인:
-  username: admin
-  password: ${ADMIN_PW:-<argocd-initial-admin-secret 확인>}
+  username: root
+  password: soldesk1.
+  (기본 admin은 비활성화됨. 계정/비밀번호는 helm values에 bcrypt로 박혀있음)
 
 Application 상태:
   kubectl get application -n $NAMESPACE
