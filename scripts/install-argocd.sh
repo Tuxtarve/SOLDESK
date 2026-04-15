@@ -64,16 +64,37 @@ else
   echo "WARN: $APP_MANIFEST 없음 — Application 등록 생략" >&2
 fi
 
+# ── ArgoCD UI 외부 노출 Ingress (internet-facing ALB) ─────────────
+INGRESS_MANIFEST="$ROOT/argocd/argocd-ingress.yaml"
+if [[ -f "$INGRESS_MANIFEST" ]]; then
+  echo "UI Ingress 등록: $INGRESS_MANIFEST"
+  kubectl apply -f "$INGRESS_MANIFEST"
+fi
+
 # ── admin 비밀번호 + 접속 안내 ────────────────────────────────────
 ADMIN_PW=$(kubectl -n "$NAMESPACE" get secret argocd-initial-admin-secret \
   -o jsonpath="{.data.password}" 2>/dev/null | base64 -d || echo "")
+
+# ALB 주소 대기 (ALB Controller가 internet-facing ALB 프로비저닝까지 2~3분)
+echo "ArgoCD UI ALB 주소 대기 중..."
+ARGOCD_UI_HOST=""
+for i in $(seq 1 30); do
+  ARGOCD_UI_HOST=$(kubectl get ingress argocd-server -n "$NAMESPACE" \
+    -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)
+  [[ -n "$ARGOCD_UI_HOST" ]] && break
+  sleep 10
+done
 
 cat <<EOF
 
 ==================================================================
 ArgoCD 설치 완료
 
-UI 접속 (port-forward):
+UI 접속:
+  ${ARGOCD_UI_HOST:+http://$ARGOCD_UI_HOST}
+  ${ARGOCD_UI_HOST:-(ALB 주소 대기 중 — 잠시 후 kubectl get ingress argocd-server -n $NAMESPACE)}
+
+대안 (port-forward):
   kubectl port-forward -n $NAMESPACE svc/argocd-server 8080:80
   → http://localhost:8080
 
