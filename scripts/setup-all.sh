@@ -403,89 +403,61 @@ else
     fi
   fi
 
-  # ── 10. 모니터링 Prometheus에 EKS 서비스 scrape 등록 ──
+  # ── 10. Grafana 대시보드 HTTP API 프로비저닝 ─────────────────
+  # Prometheus scrape 설정은 userdata.sh의 ${alb_dns} 템플릿 변수로 이미
+  # 처리됨 (monitoring 모듈에 user_data_replace_on_change=true). 두 번째
+  # terraform apply에서 alb_listener_arn이 tfvars에 박히는 순간 user_data가
+  # 바뀌고 인스턴스가 자동 재생성되어 올바른 scrape_configs로 부팅한다.
+  # 따라서 별도의 SSM push는 불필요.
+  #
+  # Grafana 대시보드 JSON은 Grafana HTTP API로 직접 POST한다. 이 경로는
+  # SSM에 의존하지 않고, Web_SG가 3000 포트를 0.0.0.0/0로 열어둔 것을
+  # 활용한다. SSM이 불안정한 AMI 조합에서도 동작한다.
   echo ""
   echo "=========================================="
-  echo " [10/10] Prometheus EKS 서비스 scrape 등록"
+  echo " [10/10] Grafana 대시보드 HTTP API 프로비저닝"
   echo "=========================================="
-  MONITORING_INSTANCE_ID="$(terraform output -raw monitoring_instance_id 2>/dev/null || true)"
-  if [[ -n "$MONITORING_INSTANCE_ID" && "$MONITORING_INSTANCE_ID" != "" ]]; then
-    PROM_B64=$(base64 -w 0 << PROMEOF
-global:
-  scrape_interval: 15s
-  evaluation_interval: 15s
-  external_labels:
-    env: prod
-    region: ap-northeast-2
-
-alerting:
-  alertmanagers:
-    - static_configs:
-        - targets: ['alertmanager:9093']
-
-rule_files:
-  - /etc/prometheus/rules/*.yml
-
-scrape_configs:
-  - job_name: node-exporter
-    static_configs:
-      - targets: ['node-exporter:9100']
-        labels:
-          instance: monitoring-ec2
-
-  - job_name: cloudwatch-exporter
-    static_configs:
-      - targets: ['cloudwatch-exporter:9106']
-    scrape_interval: 60s
-
-  - job_name: redis-exporter
-    static_configs:
-      - targets: ['redis-exporter:9121']
-
-  - job_name: prometheus
-    static_configs:
-      - targets: ['localhost:9090']
-
-  - job_name: event-svc
-    static_configs:
-      - targets: ['${ALB_ADDRESS}:80']
-    metrics_path: /metrics
-    honor_labels: true
-
-  - job_name: reserv-svc
-    static_configs:
-      - targets: ['${ALB_ADDRESS}:80']
-    metrics_path: /reserv-metrics
-    honor_labels: true
-
-  - job_name: worker-svc
-    static_configs:
-      - targets: ['${ALB_ADDRESS}:80']
-    metrics_path: /worker-metrics
-    honor_labels: true
-PROMEOF
-)
-    aws ssm send-command \
-      --instance-ids "$MONITORING_INSTANCE_ID" \
-      --document-name "AWS-RunShellScript" \
-      --parameters "{\"commands\":[\"echo $PROM_B64 | base64 -d > /opt/monitoring/prometheus/prometheus.yml && docker restart prometheus\"]}" \
-      --output text --query "Command.CommandId" >/dev/null
-    echo "Prometheus에 EKS 서비스 scrape 등록 완료 (ALB: $ALB_ADDRESS)"
-
-    # ── 11. Grafana 대시보드 JSON 프로비저닝 ──
-    echo ""
-    echo "=========================================="
-    echo " [11/11] Grafana 대시보드 프로비저닝"
-    echo "=========================================="
-    DASH_B64=$(base64 -w 0 < "$ROOT/monitoring/grafana/dashboards/ticketing-overview.json")
-    aws ssm send-command \
-      --instance-ids "$MONITORING_INSTANCE_ID" \
-      --document-name "AWS-RunShellScript" \
-      --parameters "{\"commands\":[\"echo $DASH_B64 | base64 -d > /opt/monitoring/grafana/dashboards/ticketing-overview.json && docker restart grafana\"]}" \
-      --output text --query "Command.CommandId" >/dev/null
-    echo "Grafana 대시보드 프로비저닝 완료"
+  MONITORING_IP="$(terraform output -raw monitoring_ec2_ip 2>/dev/null || true)"
+  DASH_FILE="$ROOT/monitoring/grafana/dashboards/ticketing-overview.json"
+  if [[ -z "$MONITORING_IP" || ! -f "$DASH_FILE" ]]; then
+    echo "WARNING: monitoring_ec2_ip 또는 대시보드 파일 누락 — 건너뜀" >&2
   else
-    echo "WARNING: 모니터링 인스턴스 ID를 가져올 수 없어 Prometheus 설정을 건너뜁니다."
+    # Grafana가 HTTP 응답할 때까지 대기 (docker-compose up 직후에는 부팅 중)
+    echo "Grafana HTTP 응답 대기 중 (http://$MONITORING_IP:3000)..."
+    for i in $(seq 1 30); do
+      if curl -fsS -o /dev/null "http://$MONITORING_IP:3000/api/health" 2>/dev/null; then
+        echo "  Grafana Ready ($((i*5))s)"
+        break
+      fi
+      [[ "$i" -eq 30 ]] && { echo "WARNING: Grafana 2.5분 내 응답 없음 — 건너뜀" >&2; MONITORING_IP=""; break; }
+      sleep 5
+    done
+
+    if [[ -n "$MONITORING_IP" ]]; then
+      # userdata.sh의 GF_SECURITY_ADMIN_USER/PASSWORD 와 동기
+      GF_USER="root"
+      GF_PASS="soldesk1."
+
+      # 대시보드 업로드 페이로드: { dashboard: <JSON>, overwrite: true, folderId: 0 }
+      # jq 의존 없이 printf로 JSON 조립 (Git Bash에 jq 없는 경우 대응)
+      PAYLOAD=$(mktemp)
+      trap 'rm -f "$PAYLOAD"' EXIT
+      DASH_CONTENT=$(cat "$DASH_FILE")
+      printf '{"dashboard": %s, "overwrite": true, "folderId": 0, "message": "setup-all.sh"}' \
+        "$DASH_CONTENT" > "$PAYLOAD"
+
+      HTTP_CODE=$(curl -s -o /tmp/gf_resp.json -w "%{http_code}" \
+        -u "$GF_USER:$GF_PASS" -H "Content-Type: application/json" \
+        -X POST "http://$MONITORING_IP:3000/api/dashboards/db" \
+        --data-binary "@$PAYLOAD")
+      if [[ "$HTTP_CODE" == "200" ]]; then
+        echo "Grafana 대시보드 업로드 완료 (HTTP 200)"
+      else
+        echo "WARNING: Grafana 업로드 실패 (HTTP $HTTP_CODE)" >&2
+        cat /tmp/gf_resp.json >&2 || true
+      fi
+      rm -f /tmp/gf_resp.json
+    fi
   fi
 fi
 

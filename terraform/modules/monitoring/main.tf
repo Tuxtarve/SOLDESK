@@ -43,6 +43,12 @@ resource "aws_instance" "monitoring" {
   iam_instance_profile   = aws_iam_instance_profile.monitoring.name
   key_name               = var.key_name != "" ? var.key_name : null
 
+  # user_data 변경 시 인스턴스를 자동 재생성한다. 두 번째 terraform apply
+  # (alb_listener_arn이 tfvars에 박힌 후)가 alb_dns 템플릿 변수를 채우는데,
+  # replace_on_change=false면 in-place 업데이트만 되고 실제 부팅 스크립트는
+  # 옛 alb_dns(빈값)로 그대로 돌아 Prometheus scrape 타겟이 비어 있었다.
+  user_data_replace_on_change = true
+
   user_data_base64 = base64gzip(templatefile("${path.module}/userdata.sh", {
     redis_host        = var.redis_host
     slack_webhook_url = var.slack_webhook_url
