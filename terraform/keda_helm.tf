@@ -42,7 +42,7 @@ resource "helm_release" "keda" {
 
   # KEDA 설치 중 생성되는 Service 등이 ALB Controller webhook을 호출할 수 있어,
   # 컨트롤러(webhook endpoints)가 준비되기 전에 실행되면 실패할 수 있다.
-  depends_on = [module.eks, null_resource.install_aws_load_balancer_controller]
+  depends_on = [module.eks, null_resource.install_aws_load_balancer_controller,kubernetes_namespace.ticketing]
 }
 
 resource "null_resource" "keda_cleanup_on_destroy" {

@@ -6,7 +6,7 @@ resource "null_resource" "cleanup_k8s_resources" {
   triggers = {
     cluster_name = var.cluster_name
     region       = var.aws_region
-    vpc_id       = var.vpc_id
+    vpc_id       = try(var.vpc_id, "")
   }
 
   depends_on = [
@@ -32,22 +32,7 @@ resource "null_resource" "cleanup_k8s_resources" {
 # - 하지만 실제로는 노드그룹 종료 후에 aws-k8s ENI가 'available' 상태로 남는 타이밍이 발생할 수 있다.
 # - 아래 cleanup_vpc_leftovers_post 는 노드그룹/클러스터 삭제 "후"에 한 번 더 ENI 잔재를 지워서
 #   subnet 삭제가 막히는 상황을 줄인다.
-resource "null_resource" "cleanup_vpc_leftovers_post" {
-  triggers = {
-    region = var.aws_region
-    vpc_id = var.vpc_id
-  }
 
-  provisioner "local-exec" {
-    interpreter = ["bash", "-c"]
-    when        = destroy
-    environment = {
-      EKS_POST_REGION = self.triggers.region
-      EKS_POST_VPC_ID = self.triggers.vpc_id
-    }
-    command = "tr -d '\\r' < \"${path.module}/scripts/cleanup_vpc_enis_post_eks_destroy.sh\" | bash"
-  }
-}
 
 data "aws_iam_policy_document" "eks_assume" {
   statement {
@@ -85,8 +70,7 @@ resource "aws_eks_cluster" "main" {
   }
 
   depends_on = [
-    aws_iam_role_policy_attachment.eks_cluster,
-    null_resource.cleanup_vpc_leftovers_post,
+    aws_iam_role_policy_attachment.eks_cluster
   ]
   tags = { Name = var.cluster_name, Environment = var.env }
 }
@@ -144,8 +128,7 @@ resource "aws_eks_node_group" "app" {
   depends_on = [
     aws_iam_role_policy_attachment.eks_node_worker,
     aws_iam_role_policy_attachment.eks_node_cni,
-    aws_iam_role_policy_attachment.eks_node_ecr,
-    null_resource.cleanup_vpc_leftovers_post,
+    aws_iam_role_policy_attachment.eks_node_ecr
   ]
 
   tags = { Name = "${local.name_prefix}-app-nodes", Environment = var.env }

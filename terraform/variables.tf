@@ -6,16 +6,19 @@ variable "env" {
 variable "aws_region" {
   type        = string
   description = "AWS region (credentials come from ~/.aws/*)."
+  default     = "ap-northeast-2"
 }
 
 variable "db_password" {
   type      = string
   sensitive = true
+  default = "dummy-password"
 }
 
 variable "eks_cluster_name" {
   type        = string
   description = "EKS cluster name."
+  default     = "ticketing-eks"
 }
 
 variable "github_repo" {
@@ -190,7 +193,7 @@ variable "eks_app_node_instance_types" {
 
 variable "eks_app_node_desired_size" {
   type        = number
-  default     = 2
+  default     = 3
   description = "평시 desired 노드 수 (Pod 밀도 한도로 1노드가 부족할 때 2 권장)."
 }
 

@@ -43,6 +43,7 @@ data "external" "terraform_host_exec_clis" {
   program = ["bash", "-c", "tr -d '\\r' < \"${path.module}/scripts/verify_terraform_host_cli.sh\" | bash"]
 }
 
+
 module "network" {
   source           = "./modules/network"
   env              = var.env
@@ -136,10 +137,14 @@ module "eks" {
 
 module "monitoring" {
   source = "./modules/monitoring"
-
+  count  =  0
+  # EKS 정보
   cluster_name           = module.eks.cluster_name
   cluster_endpoint       = module.eks.cluster_endpoint
-  cluster_ca_certificate = module.eks.cluster_ca_certificate
+  cluster_ca_certificate = module.eks.cluster_ca
+
+  # 핵심 (이것만 필요)
+  vpc_id = module.network.vpc_id
 
   depends_on = [module.eks]
 }
