@@ -186,14 +186,14 @@ fi
 
 # ── 1. Terraform Apply ──
 echo "=========================================="
-echo " [1/8] Terraform Apply"
+echo " [1/13] Terraform Apply"
 echo "=========================================="
 terraform apply -auto-approve
 
 # ── 2. kubeconfig 설정 ──
 echo ""
 echo "=========================================="
-echo " [2/8] kubeconfig 설정"
+echo " [2/13] kubeconfig 설정"
 echo "=========================================="
 CLUSTER_NAME="$(terraform output -raw eks_cluster_name)"
 REGION="$(terraform output -raw aws_region)"
@@ -203,42 +203,37 @@ echo "kubeconfig 설정 완료"
 # ── 3. AWS Load Balancer Controller 설치 ──
 echo ""
 echo "=========================================="
-echo " [3/8] AWS Load Balancer Controller 설치"
+echo " [3/13] AWS Load Balancer Controller 설치"
 echo "=========================================="
 bash "$SCRIPTS/install-aws-load-balancer-controller.sh"
 
 # ── 4. Cluster Autoscaler 설치 ──
 echo ""
 echo "=========================================="
-echo " [4/8] Cluster Autoscaler 설치"
+echo " [4/13] Cluster Autoscaler 설치"
 echo "=========================================="
 bash "$SCRIPTS/install-cluster-autoscaler.sh"
 
 # ── 4.5. KEDA 설치 (SQS 큐 길이 기반 worker-svc 자동 스케일링) ──
 echo ""
 echo "=========================================="
-echo " [4.5/8] KEDA 설치"
+echo " [5/13] KEDA 설치"
 echo "=========================================="
 bash "$SCRIPTS/install-keda.sh"
 
-# ── 5. 앱 배포 ──
+# ── 6. GitOps bootstrap: namespace + Secret ──
+# ArgoCD가 k8s/ 매니페스트를 sync 하기 전에 필요한 최소한의 리소스.
+# 나머지(Deployment/Service/HPA/Ingress/ScaledObject...)는 ArgoCD가 생성.
 echo ""
 echo "=========================================="
-echo " [5/8] ticketing 앱 배포"
+echo " [6/13] GitOps bootstrap (namespace + secret)"
 echo "=========================================="
-bash "$SCRIPTS/apply-ticketing-k8s.sh"
+bash "$SCRIPTS/bootstrap-ticketing-secret.sh"
 
-# KEDA ScaledObject는 이제 k8s/kustomization.yaml에 포함되어
-# step 5의 apply-ticketing-k8s.sh → kubectl apply -k 에서 함께 적용됨.
-# 큐 URL / region이 git에 박혀 있어 envsubst 불필요.
-sleep 5
-kubectl get scaledobject -n ticketing 2>&1 || true
-kubectl get hpa -n ticketing | grep keda || true
-
-# ── 6. DB 스키마 초기화 ──
+# ── 7. DB 스키마 초기화 ──
 echo ""
 echo "=========================================="
-echo " [6/8] DB 스키마 초기화"
+echo " [7/13] DB 스키마 초기화"
 echo "=========================================="
 DB_WRITER_HOST="$(terraform output -raw rds_writer_endpoint)"
 
@@ -256,57 +251,80 @@ cat "$ROOT/db/seed.sql" | kubectl exec -i mysql-init -n ticketing -- \
 kubectl delete pod mysql-init -n ticketing --wait=false
 echo "DB 스키마 + 시드 데이터 적용 완료"
 
-# ── 7. Docker 이미지 빌드 & ECR Push (docker 없으면 skip) ──
-# Docker Desktop은 GUI 설치 + 재부팅이 필요해 자동 설치 불가. 미설치 환경에서는
-# 단계를 skip하고 CI/CD 경로 안내. setup-all.sh는 step 8~11까지 완주됨.
+# ── 8. Docker 이미지 빌드 & ECR Push ──
+# GitOps 순서: ArgoCD가 Deployment를 만들기 전에 이미지가 ECR에 올라가 있어야
+# 첫 pull이 성공한다. 이미지가 없어도 ArgoCD는 Deployment를 만들고 파드는
+# ImagePullBackOff로 기다리다가 이미지가 올라오면 자동 복구되긴 하지만,
+# Synced+Healthy 상태를 일찍 달성하기 위해 ArgoCD 설치 직전에 push 한다.
+#
+# kubectl rollout restart는 더 이상 하지 않는다:
+#   - 이 시점에는 Deployment가 아직 없다 (ArgoCD가 step 9에서 만듦)
+#   - ArgoCD 설치 이후엔 수동 rollout restart가 드리프트로 잡힐 수 있고,
+#     이미지 갱신은 git의 kustomization image tag commit으로 처리해야 깔끔하다.
 echo ""
 echo "=========================================="
-echo " [7/8] Docker 이미지 빌드 & ECR Push"
+echo " [8/13] Docker 이미지 빌드 & ECR Push"
 echo "=========================================="
 ACCOUNT_ID="$(terraform output -raw aws_account_id)"
 ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
 
 if ! command -v docker >/dev/null 2>&1; then
-  echo "WARNING: docker CLI 미설치 — step 7 (이미지 빌드+푸시) skip."
-  echo ""
-  echo "  파드들은 이미지가 ECR에 올라갈 때까지 ImagePullBackOff 상태로 대기합니다."
-  echo ""
-  echo "  이미지를 올리는 방법:"
-  echo "    1) Docker Desktop 설치 후 재실행: https://www.docker.com/products/docker-desktop/"
-  echo "    2) GitHub Actions (module.cicd가 이미 github_actions_role 제공):"
-  echo "       - .github/workflows/에서 \$(terraform output -raw github_actions_role_arn) 사용"
-  echo "    3) AWS CloudShell에서 수동 빌드:"
-  echo "       - 레포 clone → 아래 명령 복붙"
-  echo ""
-  echo "       aws ecr get-login-password --region $REGION | \\"
-  echo "         docker login --username AWS --password-stdin $ECR_REGISTRY"
-  echo "       for SVC in event-svc reserv-svc worker-svc; do"
-  echo "         docker build -t $ECR_REGISTRY/ticketing/\$SVC:latest services/\$SVC"
-  echo "         docker push $ECR_REGISTRY/ticketing/\$SVC:latest"
-  echo "       done"
-  echo "       kubectl rollout restart deployment -n ticketing"
-  echo ""
+  echo "WARNING: docker CLI 미설치 — 이미지 빌드 skip."
+  echo "  ArgoCD가 Deployment를 만들면 ImagePullBackOff 상태로 대기함."
+  echo "  나중에 GitHub Actions (build-and-publish.yml) 또는 CloudShell에서 push:"
+  echo "    aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ECR_REGISTRY"
+  echo "    for SVC in event-svc reserv-svc worker-svc; do"
+  echo "      docker build -t $ECR_REGISTRY/ticketing/\$SVC:latest services/\$SVC"
+  echo "      docker push $ECR_REGISTRY/ticketing/\$SVC:latest"
+  echo "    done"
 else
   aws ecr get-login-password --region "$REGION" | \
     docker login --username AWS --password-stdin "$ECR_REGISTRY"
-
   for SVC in event-svc reserv-svc worker-svc; do
     echo "빌드 & 푸시: $SVC"
     docker build -t "${ECR_REGISTRY}/ticketing/${SVC}:latest" "$ROOT/services/${SVC}"
     docker push "${ECR_REGISTRY}/ticketing/${SVC}:latest"
   done
-
-  kubectl rollout restart deployment -n ticketing
-  echo "이미지 배포 완료, 파드 재시작 중..."
-  kubectl rollout status deployment/event-svc -n ticketing --timeout=120s
-  kubectl rollout status deployment/reserv-svc -n ticketing --timeout=120s
-  kubectl rollout status deployment/worker-svc -n ticketing --timeout=120s
+  echo "이미지 push 완료 (이 시점엔 아직 Deployment 없음 — ArgoCD가 step 9에서 생성)"
 fi
 
-# ── 8. 프론트엔드 S3 배포 ──
+# ── 9. ArgoCD 설치 + ticketing Application 등록 ──
 echo ""
 echo "=========================================="
-echo " [8/8] 프론트엔드 S3 배포"
+echo " [9/13] ArgoCD 설치 + Application 등록"
+echo "=========================================="
+bash "$SCRIPTS/install-argocd.sh"
+
+# ── 10. ArgoCD Application Synced + Healthy 대기 ──
+# ArgoCD가 git을 폴링하여 k8s/ 전체를 cluster에 적용. Deployment가 생성되면
+# pod가 위에서 push한 이미지를 pull하고 Ready 상태가 되어야 Healthy 판정.
+# 첫 sync는 보통 1~3분 내 완료. Ingress가 ALB를 provision하는 데 추가 1~2분.
+echo ""
+echo "=========================================="
+echo " [10/13] ArgoCD Application Synced 대기"
+echo "=========================================="
+echo "ticketing Application 상태 폴링 (최대 10분)..."
+for i in $(seq 1 60); do
+  SYNC=$(kubectl get application ticketing -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
+  HEALTH=$(kubectl get application ticketing -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
+  if [[ "$SYNC" == "Synced" && "$HEALTH" == "Healthy" ]]; then
+    echo "  Synced+Healthy 달성 ($((i*10))s)"
+    break
+  fi
+  echo "  [$((i*10))s] sync=$SYNC health=$HEALTH"
+  if [[ "$i" -eq 60 ]]; then
+    echo "WARNING: 10분 내 Synced+Healthy 안 됨. ArgoCD UI에서 확인 필요." >&2
+    kubectl get application ticketing -n argocd -o jsonpath='{.status.conditions}' >&2 || true
+    echo "" >&2
+  fi
+  sleep 10
+done
+kubectl get pods -n ticketing
+
+# ── 11. 프론트엔드 S3 배포 ──
+echo ""
+echo "=========================================="
+echo " [11/13] 프론트엔드 S3 배포"
 echo "=========================================="
 BUCKET="ticketing-frontend-${ACCOUNT_ID}"
 COGNITO_CLIENT_ID="$(terraform output -raw cognito_client_id)"
@@ -335,7 +353,7 @@ CLOUDFRONT_DOMAIN="$(terraform output -raw cloudfront_domain)"
 # 흐름: 브라우저 → CloudFront → API GW → VPC Link → Internal ALB → EKS
 echo ""
 echo "=========================================="
-echo " [9/9] API Gateway VPC Link Integration 연결"
+echo " [12/13] API Gateway VPC Link Integration 연결"
 echo "=========================================="
 echo "Internal ALB 주소 대기 중 (ingress가 ALB 만들 때까지)..."
 for i in $(seq 1 30); do
@@ -403,7 +421,7 @@ else
   # 활용한다. SSM이 불안정한 AMI 조합에서도 동작한다.
   echo ""
   echo "=========================================="
-  echo " [10/10] Grafana 대시보드 HTTP API 프로비저닝"
+  echo " [13/13] Grafana 대시보드 HTTP API 프로비저닝"
   echo "=========================================="
   MONITORING_IP="$(terraform output -raw monitoring_ec2_ip 2>/dev/null || true)"
   DASH_FILE="$ROOT/monitoring/grafana/dashboards/ticketing-overview.json"
