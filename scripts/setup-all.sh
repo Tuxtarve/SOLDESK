@@ -326,11 +326,11 @@ API_GW_ENDPOINT="$(terraform output -raw api_gateway_endpoint)"
 
 # api-origin.js에 실제 값 주입하여 S3에 업로드
 cat > /tmp/api-origin.js <<JSEOF
-window.__TICKETING_API_ORIGIN__ = '${API_GW_ENDPOINT}';
+window.__TICKETING_API_ORIGIN__ = "${API_GW_ENDPOINT}";
 window.COGNITO_CONFIG = {
-  REGION: '${REGION}',
-  CLIENT_ID: '${COGNITO_CLIENT_ID}',
-  USER_POOL_ID: '${COGNITO_USER_POOL_ID}'
+  REGION: "${REGION}",
+  CLIENT_ID: "${COGNITO_CLIENT_ID}",
+  USER_POOL_ID: "${COGNITO_USER_POOL_ID}"
 };
 JSEOF
 
