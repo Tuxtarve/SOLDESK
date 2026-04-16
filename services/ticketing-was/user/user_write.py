@@ -77,6 +77,13 @@ def _refund_movie_booking(user_id: int, booking_id: int):
                 (booking_id,),
             )
 
+            # 좌석 수 복원
+            if schedule_id > 0 and reg_count > 0:
+                cur.execute(
+                    "UPDATE schedules SET remain_count = remain_count + %s WHERE schedule_id = %s",
+                    (reg_count, schedule_id),
+                )
+
         conn.commit()
     except Exception as exc:
         conn.rollback()
