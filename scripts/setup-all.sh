@@ -324,23 +324,16 @@ COGNITO_CLIENT_ID="$(terraform output -raw cognito_client_id)"
 COGNITO_USER_POOL_ID="$(terraform output -raw cognito_user_pool_id)"
 API_GW_ENDPOINT="$(terraform output -raw api_gateway_endpoint)"
 
-# api-origin.js에 실제 값 주입하여 S3에 업로드
-cat > /tmp/api-origin.js <<JSEOF
-window.__TICKETING_API_ORIGIN__ = "${API_GW_ENDPOINT}";
-window.COGNITO_CONFIG = {
-  REGION: "${REGION}",
-  CLIENT_ID: "${COGNITO_CLIENT_ID}",
-  USER_POOL_ID: "${COGNITO_USER_POOL_ID}"
-};
-JSEOF
+# index.html에 Cognito + API GW 설정을 인라인 주입
+# (api-origin.js 별도 파일 방식은 CloudFront 캐시 이슈 발생하여 인라인으로 전환)
+sed "s|<script src=\"/api-origin.js\"></script>|<script>window.__TICKETING_API_ORIGIN__=\"${API_GW_ENDPOINT}\";window.COGNITO_CONFIG={REGION:\"${REGION}\",CLIENT_ID:\"${COGNITO_CLIENT_ID}\",USER_POOL_ID:\"${COGNITO_USER_POOL_ID}\"};</script>|" \
+  "$ROOT/frontend/src/index.html" > /tmp/index.html
 
-aws s3 cp /tmp/api-origin.js "s3://${BUCKET}/api-origin.js" \
-  --content-type "application/javascript; charset=utf-8" --region "$REGION"
-rm -f /tmp/api-origin.js
-
-# 나머지 프론트엔드 파일 sync
-aws s3 sync "$ROOT/frontend/src/" "s3://${BUCKET}/" --region "$REGION" \
-  --exclude "api-origin.js" --delete
+# 프론트엔드 파일 sync (index.html은 치환본으로 덮어쓰기)
+aws s3 sync "$ROOT/frontend/src/" "s3://${BUCKET}/" --region "$REGION" --delete
+aws s3 cp /tmp/index.html "s3://${BUCKET}/index.html" \
+  --content-type "text/html; charset=utf-8" --region "$REGION"
+rm -f /tmp/index.html
 
 CF_DIST_ID="$(aws cloudfront list-distributions \
   --query "DistributionList.Items[?Origins.Items[?Id=='S3-frontend']].Id | [0]" \
