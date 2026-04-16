@@ -38,6 +38,7 @@ cat >"$VALUES" <<EOF
 clusterName: ${CLUSTER_NAME}
 region: ${REGION}
 vpcId: ${VPC_ID}
+replicaCount: 1
 serviceAccount:
   create: true
   name: aws-load-balancer-controller

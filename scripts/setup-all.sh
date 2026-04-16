@@ -178,6 +178,10 @@ REGION="$(terraform output -raw aws_region)"
 aws eks update-kubeconfig --name "$CLUSTER_NAME" --region "$REGION"
 echo "kubeconfig 설정 완료"
 
+# Pod 수 절약: coredns 2→1, ebs-csi-controller 2→1
+kubectl scale deployment coredns -n kube-system --replicas=1 2>/dev/null || true
+kubectl scale deployment ebs-csi-controller -n kube-system --replicas=1 2>/dev/null || true
+
 # ── 3. AWS Load Balancer Controller 설치 ──
 echo ""
 echo "=========================================="
