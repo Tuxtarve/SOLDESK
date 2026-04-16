@@ -9,7 +9,7 @@ import secrets
 import string
 
 import pymysql
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from config import DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER
@@ -69,9 +69,9 @@ def _generate_booking_code() -> str:
 
 
 @router.post("/api/write/theaters/booking/commit")
-def commit_booking(payload: dict):
+def commit_booking(payload: dict, request: Request):
     data = payload if isinstance(payload, dict) else {}
-    user_id = _to_int(data.get("user_id"))
+    user_id = _to_int(getattr(request.state, "user_id", None) or data.get("user_id"))
     schedule_id = _to_int(data.get("schedule_id"))
     seats = data.get("seats") or []
 
