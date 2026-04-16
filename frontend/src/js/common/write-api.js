@@ -11,9 +11,6 @@ function resolveWriteTarget(path) {
 
 async function writeApi(path, method = 'POST', data = null, options = {}) {
   const runtime = window.APP_RUNTIME;
-  if (runtime && typeof runtime.ensureTicketingEndpointsLoaded === 'function') {
-    await runtime.ensureTicketingEndpointsLoaded();
-  }
   const targetPath = resolveWriteTarget(path);
 
   if (runtime && typeof runtime.requestJson === 'function') {

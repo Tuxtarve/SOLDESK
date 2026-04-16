@@ -474,10 +474,6 @@
 
   async function requestJson(url, options) {
     const opts = options || {};
-    const path = String(url || '');
-    if (path.startsWith('/api/')) {
-      await ensureTicketingEndpointsLoaded();
-    }
     const resolvedPath = resolveTicketingApiUrl(url);
     const method = String(opts.method || 'GET').toUpperCase();
     const headers = { ...(opts.headers || {}) };

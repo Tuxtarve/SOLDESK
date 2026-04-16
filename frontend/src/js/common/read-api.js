@@ -11,9 +11,6 @@ function resolveReadTarget(path) {
 
 async function readApi(path, options = {}) {
   const runtime = window.APP_RUNTIME;
-  if (runtime && typeof runtime.ensureTicketingEndpointsLoaded === 'function') {
-    await runtime.ensureTicketingEndpointsLoaded();
-  }
   const targetPath = resolveReadTarget(path);
 
   if (runtime && typeof runtime.getJson === 'function') {
