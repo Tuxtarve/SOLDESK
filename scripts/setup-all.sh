@@ -321,14 +321,26 @@ echo " [12/14] 프론트엔드 S3 배포"
 echo "=========================================="
 BUCKET="ticketing-frontend-${ACCOUNT_ID}"
 COGNITO_CLIENT_ID="$(terraform output -raw cognito_client_id)"
+COGNITO_USER_POOL_ID="$(terraform output -raw cognito_user_pool_id)"
+API_GW_ENDPOINT="$(terraform output -raw api_gateway_endpoint)"
 
-# 플레이스홀더를 실제 값으로 치환하여 임시 파일 생성 후 업로드
-sed "s|__COGNITO_CLIENT_ID__|${COGNITO_CLIENT_ID}|g" \
-  "$ROOT/frontend/src/index.html" > /tmp/index.html
+# api-origin.js에 실제 값 주입하여 S3에 업로드
+cat > /tmp/api-origin.js <<JSEOF
+window.__TICKETING_API_ORIGIN__ = '${API_GW_ENDPOINT}';
+window.COGNITO_CONFIG = {
+  REGION: '${REGION}',
+  CLIENT_ID: '${COGNITO_CLIENT_ID}',
+  USER_POOL_ID: '${COGNITO_USER_POOL_ID}'
+};
+JSEOF
 
-aws s3 cp /tmp/index.html "s3://${BUCKET}/index.html" \
-  --content-type "text/html; charset=utf-8" --region "$REGION"
-rm -f /tmp/index.html
+aws s3 cp /tmp/api-origin.js "s3://${BUCKET}/api-origin.js" \
+  --content-type "application/javascript; charset=utf-8" --region "$REGION"
+rm -f /tmp/api-origin.js
+
+# 나머지 프론트엔드 파일 sync
+aws s3 sync "$ROOT/frontend/src/" "s3://${BUCKET}/" --region "$REGION" \
+  --exclude "api-origin.js" --delete
 
 CF_DIST_ID="$(aws cloudfront list-distributions \
   --query "DistributionList.Items[?Origins.Items[?Id=='S3-frontend']].Id | [0]" \
