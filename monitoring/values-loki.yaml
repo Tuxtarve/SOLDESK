@@ -50,3 +50,13 @@ write:
 compactor:
   working_directory: /loki/compactor
   retention_enabled: true
+
+# t3.small 리소스 절약 — 캐시·카나리 비활성화
+chunksCache:
+  enabled: false
+resultsCache:
+  enabled: false
+test:
+  enabled: false
+lokiCanary:
+  enabled: false
