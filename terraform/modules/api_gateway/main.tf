@@ -119,9 +119,9 @@ resource "aws_apigatewayv2_route" "api_public" {
     "GET /event-metrics",
     "GET /reserv-metrics",
     "GET /worker-metrics",
-    "GET /api/events",
-    "GET /api/events/{event_id}",
-    "GET /api/events/{event_id}/seats",
+    # 형 프론트엔드 공개 경로 (비로그인 조회 가능)
+    "GET /api/read/{proxy+}",
+    "GET /api/read/health",
   ]) : toset([])
 
   api_id    = aws_apigatewayv2_api.main.id

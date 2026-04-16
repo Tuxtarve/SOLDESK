@@ -72,7 +72,10 @@
       var parts = token.split('.');
       if (parts.length < 2) return null;
       var payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
-      var decoded = atob(payload);
+      var binary = atob(payload);
+      var bytes = new Uint8Array(binary.length);
+      for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      var decoded = new TextDecoder('utf-8').decode(bytes);
       return JSON.parse(decoded);
     } catch (e) {
       return null;
