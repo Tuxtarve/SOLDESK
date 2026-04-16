@@ -227,7 +227,7 @@ def _reconcile_concert_redis_state_from_db(*, show_id: int) -> dict:
                 (sid,),
             )
             rows = cur.fetchall() or []
-            confirmed_keys = [f\"{int(r['seat_row_no'])}-{int(r['seat_col_no'])}\" for r in rows]
+            confirmed_keys = [f"{int(r['seat_row_no'])}-{int(r['seat_col_no'])}" for r in rows]
 
             # DB holds(폴백 테이블)가 남아있을 수 있음(과거 Redis OFF 실행/테스트)
             try:

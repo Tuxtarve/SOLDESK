@@ -1009,15 +1009,15 @@ def process_concert_booking(body):
                         try:
                             raw_prev = elasticache_booking_client.get(_booking_result_key(booking_ref))
                             if raw_prev and json.loads(raw_prev).get("ok") is True:
-                        if CACHE_ENABLED:
-                            _finalize_concert_hold_by_ref(booking_ref, restore_remain=False)
-                        _db_finalize_concert_hold_by_ref(booking_ref)
+                                if CACHE_ENABLED:
+                                    _finalize_concert_hold_by_ref(booking_ref, restore_remain=False)
+                                _db_finalize_concert_hold_by_ref(booking_ref)
                                 if pending_count > 0:
-                            if CACHE_ENABLED:
-                                _adjust_concert_pending(show_id, -pending_count)
-                                _concert_delete_read_caches(
-                                    concert_id=_to_int(show.get("concert_id")), show_id=show_id
-                                )
+                                    if CACHE_ENABLED:
+                                        _adjust_concert_pending(show_id, -pending_count)
+                                        _concert_delete_read_caches(
+                                            concert_id=_to_int(show.get("concert_id")), show_id=show_id
+                                        )
                                 log.info("콘서트 멱등: sqs_booking_ref 재전달·DB 이미 완료 ref=%s", booking_ref)
                                 return
                         except Exception:
