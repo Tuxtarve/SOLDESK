@@ -509,7 +509,7 @@
         : new URL(resolvedPath, window.location.origin).toString();
     const fetchOptions = {
       method,
-      credentials: opts.credentials || 'include',
+      credentials: opts.credentials || 'omit',
       cache: opts.cache || 'default',
       headers
     };

@@ -30,7 +30,7 @@ async function readApi(path, options = {}) {
 
   const response = await fetch(targetPath, {
     method: 'GET',
-    credentials: 'include',
+    credentials: 'omit',
     cache: options.cache || 'default',
     ...extraAuth
   });

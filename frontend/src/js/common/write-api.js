@@ -39,7 +39,7 @@ async function writeApi(path, method = 'POST', data = null, options = {}) {
 
   const fetchOptions = {
     method,
-    credentials: 'include',
+    credentials: 'omit',
     headers
   };
 
