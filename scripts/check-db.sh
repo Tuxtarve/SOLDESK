@@ -1,30 +1,47 @@
-#!/bin/bash
-# DB 전체 조회 스크립트
+#!/usr/bin/env bash
+# DB 전체 조회 스크립트 (새 스키마: 영화+공연 도메인)
 # 사용법: bash scripts/check-db.sh
+set -euo pipefail
 
-kubectl exec deployment/reserv-svc -n ticketing -- sh -c 'cat << "PYEOF" > /tmp/ck.py
+kubectl exec deployment/read-api -n ticketing -- sh -c 'cat << "PYEOF" > /tmp/ck.py
 import pymysql, os
 conn = pymysql.connect(host=os.environ["DB_READER_HOST"], user=os.environ["DB_USER"], password=os.environ["DB_PASSWORD"], db="ticketing")
 cur = conn.cursor()
+
+print("=== 영화 목록 ===")
+cur.execute("SELECT movie_id, title, genre, director, runtime_minutes FROM movies LIMIT 20")
+for r in cur.fetchall(): print(r)
+print()
+
+print("=== 극장/상영관 ===")
+cur.execute("SELECT t.theater_id, t.name, h.hall_id, h.name, h.total_seats FROM theaters t JOIN halls h ON t.theater_id = h.theater_id")
+for r in cur.fetchall(): print(r)
+print()
+
+print("=== 상영 스케줄 ===")
+cur.execute("SELECT s.schedule_id, m.title, s.show_date, s.show_time, s.available_seats FROM schedules s JOIN movies m ON s.movie_id = m.movie_id ORDER BY s.show_date DESC LIMIT 20")
+for r in cur.fetchall(): print(r)
+print()
+
+print("=== 영화 예매 현황 ===")
+cur.execute("SELECT b.booking_id, b.status, b.total_price, b.created_at FROM booking b ORDER BY b.created_at DESC LIMIT 20")
+for r in cur.fetchall(): print(r)
+print()
+
 print("=== 공연 목록 ===")
-cur.execute("SELECT id, title, venue, start_at, total_seats, status FROM events")
+cur.execute("SELECT concert_id, title, venue, genre FROM concerts LIMIT 20")
 for r in cur.fetchall(): print(r)
 print()
-print("=== 좌석 상태 요약 ===")
-cur.execute("SELECT event_id, status, COUNT(*) FROM seats GROUP BY event_id, status ORDER BY event_id, status")
+
+print("=== 공연 회차 ===")
+cur.execute("SELECT cs.show_id, c.title, cs.show_date, cs.show_time, cs.total_seats, cs.available_seats FROM concert_shows cs JOIN concerts c ON cs.concert_id = c.concert_id ORDER BY cs.show_date DESC LIMIT 20")
 for r in cur.fetchall(): print(r)
 print()
-print("=== 예매 내역 ===")
-cur.execute("SELECT r.id, r.status, r.total_price, r.created_at, e.title FROM reservations r JOIN events e ON r.event_id = e.id ORDER BY r.created_at DESC")
+
+print("=== 공연 예매 현황 ===")
+cur.execute("SELECT cb.booking_id, cb.status, cb.total_price, cb.created_at FROM concert_booking cb ORDER BY cb.created_at DESC LIMIT 20")
 for r in cur.fetchall(): print(r)
-print()
-print("=== 예매-좌석 매핑 ===")
-cur.execute("SELECT rs.reservation_id, s.section, s.row, s.number, s.grade, s.price, s.status FROM reservation_seats rs JOIN seats s ON rs.seat_id = s.id")
-for r in cur.fetchall(): print(r)
-print()
-print("=== 결제 내역 ===")
-cur.execute("SELECT reservation_id, amount, method, status, paid_at FROM payments ORDER BY created_at DESC")
-for r in cur.fetchall(): print(r)
+
 conn.close()
 PYEOF
 python /tmp/ck.py'

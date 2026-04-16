@@ -119,7 +119,7 @@ with open(sys.argv[1], 'w') as f:
         query_string = true
         # Host는 API GW가 자체 도메인을 기대하므로 forward 하면 안 됨
         headers      = ["Authorization", "Content-Type", "CloudFront-Forwarded-Proto"]
-        cookies { forward = "all" }
+        cookies { forward = "none" }
       }
 
       min_ttl     = 0
@@ -131,6 +131,13 @@ with open(sys.argv[1], 'w') as f:
   # SPA 라우팅 (404 → index.html)
   custom_error_response {
     error_code         = 404
+    response_code      = 200
+    response_page_path = "/index.html"
+  }
+
+  # SPA 라우팅 (403 → index.html) — S3 OAC에서 존재하지 않는 경로는 403 반환
+  custom_error_response {
+    error_code         = 403
     response_code      = 200
     response_page_path = "/index.html"
   }

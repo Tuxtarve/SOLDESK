@@ -190,7 +190,12 @@ module "eks" {
   subnet_ids        = module.network.public_subnet_ids
   security_group_id = module.network.eks_sg_id
   cluster_name      = var.eks_cluster_name
-  sqs_queue_arns    = [module.sqs.reservation_queue_arn, module.sqs.reservation_dlq_arn]
+  sqs_queue_arns    = [
+    module.sqs.reservation_queue_arn,
+    module.sqs.reservation_dlq_arn,
+    module.sqs.reservation_ui_queue_arn,
+    module.sqs.reservation_ui_dlq_arn,
+  ]
 
   # destroy 순서: module.eks → post_eks_vpc_cleanup → module.network
   depends_on = [module.network, null_resource.post_eks_vpc_cleanup]
@@ -206,20 +211,6 @@ data "aws_lb_listener" "ingress" {
 data "aws_lb" "ingress" {
   count = var.alb_listener_arn != "" ? 1 : 0
   arn   = data.aws_lb_listener.ingress[0].load_balancer_arn
-}
-
-module "monitoring" {
-  source            = "./modules/monitoring"
-  env               = var.env
-  subnet_id         = module.network.public_subnet_ids[0]
-  security_group_id = module.network.monitoring_sg_id
-  key_name          = var.key_name
-  redis_host        = module.elasticache.redis_endpoint
-  slack_webhook_url = var.slack_webhook_url
-  alb_dns           = var.alb_listener_arn != "" ? data.aws_lb.ingress[0].dns_name : ""
-
-  # destroy 시 EC2가 네트워크(SG/서브넷)보다 먼저 삭제되도록 보장
-  depends_on = [module.network, module.elasticache]
 }
 
 module "cicd" {
@@ -272,6 +263,8 @@ resource "aws_iam_role_policy" "eks_node_sqs" {
       Resource = [
         module.sqs.reservation_queue_arn,
         module.sqs.reservation_dlq_arn,
+        module.sqs.reservation_ui_queue_arn,
+        module.sqs.reservation_ui_dlq_arn,
       ]
     }]
   })

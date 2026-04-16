@@ -3,27 +3,23 @@ kind: Kustomization
 
 resources:
   - namespace.yaml
+  - priorityclass-ticketing.yaml
   - configmap.yaml
   - sqs-service-account.yaml
-  - event-svc/deployment.yaml
-  - event-svc/service.yaml
-  - event-svc/hpa.yaml
-  - reserv-svc/deployment.yaml
-  - reserv-svc/service.yaml
-  - reserv-svc/hpa.yaml
+  - pdb-user-facing.yaml
+  - read-api/deployment.yaml
+  - read-api/service.yaml
+  - write-api/deployment.yaml
+  - write-api/service.yaml
   - worker-svc/deployment.yaml
   - worker-svc/service.yaml
-  - keda/worker-svc-scaledobject.yaml
+  - worker-svc-ui/deployment.yaml
+  - worker-svc-ui/service.yaml
   - ingress.yaml
 
-# 배포 시 실제 ECR 레지스트리로 이미지 경로를 덮어씀
-# 사용법: kustomize edit set image ticketing/event-svc=123456789.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/event-svc:abc123
 images:
-  - name: ticketing/event-svc
-    newName: 734772058616.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/event-svc
-    newTag: latest
-  - name: ticketing/reserv-svc
-    newName: 734772058616.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/reserv-svc
+  - name: ticketing/ticketing-was
+    newName: 734772058616.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/ticketing-was
     newTag: latest
   - name: ticketing/worker-svc
     newName: 734772058616.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/worker-svc

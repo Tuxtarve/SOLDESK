@@ -88,7 +88,9 @@ resource "aws_apigatewayv2_integration" "alb" {
   payload_format_version = "1.0"
 
   request_parameters = {
-    "overwrite:header.x-user-email" = "$context.authorizer.claims.email"
+    "overwrite:header.x-cognito-sub"   = "$context.authorizer.claims.sub"
+    "overwrite:header.x-cognito-email" = "$context.authorizer.claims.email"
+    "overwrite:header.x-cognito-name"  = "$context.authorizer.claims.name"
   }
 
   timeout_milliseconds = 29000

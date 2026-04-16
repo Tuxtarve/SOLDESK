@@ -1,0 +1,32 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: write-api-pdb
+  namespace: ticketing
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: write-api
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: read-api-pdb
+  namespace: ticketing
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: read-api
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: worker-svc-ui-pdb
+  namespace: ticketing
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: worker-svc-ui

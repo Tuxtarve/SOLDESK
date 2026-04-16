@@ -9,7 +9,7 @@ spec:
   project: default
   source:
     repoURL: https://github.com/sxk34/soldesk.git
-    targetRevision: 개인실험실
+    targetRevision: FINAL
     path: k8s
   destination:
     server: https://kubernetes.default.svc

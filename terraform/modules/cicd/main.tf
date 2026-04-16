@@ -1,20 +1,11 @@
 # ECR: 서비스별 이미지 저장소
-resource "aws_ecr_repository" "event_svc" {
-  name                 = "ticketing/event-svc"
+resource "aws_ecr_repository" "ticketing_was" {
+  name                 = "ticketing/ticketing-was"
   image_tag_mutability = "MUTABLE"
   force_delete         = true
 
   image_scanning_configuration { scan_on_push = true }
-  tags = { Name = "ecr-event-svc", Environment = var.env }
-}
-
-resource "aws_ecr_repository" "reserv_svc" {
-  name                 = "ticketing/reserv-svc"
-  image_tag_mutability = "MUTABLE"
-  force_delete         = true
-
-  image_scanning_configuration { scan_on_push = true }
-  tags = { Name = "ecr-reserv-svc", Environment = var.env }
+  tags = { Name = "ecr-ticketing-was", Environment = var.env }
 }
 
 resource "aws_ecr_repository" "worker_svc" {

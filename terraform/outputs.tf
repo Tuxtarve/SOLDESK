@@ -29,6 +29,10 @@ output "sqs_queue_url" {
   value = module.sqs.reservation_queue_url
 }
 
+output "sqs_ui_queue_url" {
+  value = module.sqs.reservation_ui_queue_url
+}
+
 output "eks_cluster_name" {
   description = "Pass to kubectl: aws eks update-kubeconfig --region <region> --name $(terraform output -raw eks_cluster_name)"
   value       = module.eks.cluster_name
@@ -68,29 +72,6 @@ output "cluster_autoscaler_role_arn" {
 output "keda_operator_role_arn" {
   description = "IRSA role for keda-operator ServiceAccount (SQS scaler)"
   value       = module.eks.keda_operator_role_arn
-}
-
-output "monitoring_ec2_ip" {
-  value = module.monitoring.public_ip
-}
-
-output "monitoring_instance_id" {
-  value = module.monitoring.instance_id
-}
-
-output "prometheus_url" {
-  description = "Prometheus Web UI"
-  value       = "http://${module.monitoring.public_ip}:9090"
-}
-
-output "grafana_url" {
-  description = "Grafana Dashboard (root / soldesk1.)"
-  value       = "http://${module.monitoring.public_ip}:3000"
-}
-
-output "alertmanager_url" {
-  description = "Alertmanager Web UI"
-  value       = "http://${module.monitoring.public_ip}:9093"
 }
 
 output "github_actions_role_arn" {

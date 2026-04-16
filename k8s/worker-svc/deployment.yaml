@@ -6,9 +6,7 @@ metadata:
   labels:
     app: worker-svc
 spec:
-  # replicas는 KEDA ScaledObject(worker-svc-sqs-scaler)가 관리한다
-  # kubectl apply 시 KEDA가 생성한 HPA의 desired replicas와 충돌하지 않도록
-  # 여기서는 명시하지 않는다 (kubectl 기본 1로 생성 후 KEDA가 즉시 인수)
+  replicas: 1
   selector:
     matchLabels:
       app: worker-svc
@@ -16,22 +14,27 @@ spec:
     metadata:
       labels:
         app: worker-svc
-      annotations:
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "3002"
-        prometheus.io/path: "/metrics"
     spec:
+      enableServiceLinks: false
       serviceAccountName: sqs-access-sa
       containers:
         - name: worker-svc
           image: ticketing/worker-svc:latest
+          imagePullPolicy: Always
           ports:
-            - containerPort: 3002
+            - containerPort: 5002
           envFrom:
             - configMapRef:
                 name: ticketing-config
             - secretRef:
                 name: ticketing-secrets
+          env:
+            - name: WORKER_SQS_BATCH_CONCURRENCY
+              value: "20"
+            - name: WORKER_SQS_POLLERS
+              value: "2"
+            - name: WORKER_DB_MAX_CONCURRENT
+              value: "40"
           resources:
             requests:
               memory: "128Mi"
@@ -39,3 +42,9 @@ spec:
             limits:
               memory: "256Mi"
               cpu: "300m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 5002
+            initialDelaySeconds: 10
+            periodSeconds: 15

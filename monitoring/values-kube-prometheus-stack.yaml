@@ -1,0 +1,217 @@
+# -------------------------------------------------------
+# kube-prometheus-stack  Helm values
+# Target nodes: t3.small (2 vCPU / 2 GiB) -- keep lightweight
+# -------------------------------------------------------
+
+# ── Prometheus ─────────────────────────────────────────
+prometheus:
+  prometheusSpec:
+    retention: 15d
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp3
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 20Gi
+    resources:
+      requests:
+        cpu: 200m
+        memory: 400Mi
+      limits:
+        cpu: 500m
+        memory: 768Mi
+
+    # EKS service scrape configs (app endpoints in ticketing namespace)
+    additionalScrapeConfigs:
+      - job_name: 'read-api'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: [ticketing]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: read-api
+            action: keep
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            regex: metrics
+            action: keep
+
+      - job_name: 'write-api'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: [ticketing]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: write-api
+            action: keep
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            regex: metrics
+            action: keep
+
+      - job_name: 'worker-svc'
+        kubernetes_sd_configs:
+          - role: endpoints
+            namespaces:
+              names: [ticketing]
+        relabel_configs:
+          - source_labels: [__meta_kubernetes_service_name]
+            regex: worker-svc
+            action: keep
+          - source_labels: [__meta_kubernetes_endpoint_port_name]
+            regex: metrics
+            action: keep
+
+      # CloudWatch exporter (runs as a k8s Deployment in monitoring ns)
+      - job_name: 'cloudwatch-exporter'
+        static_configs:
+          - targets: ['cloudwatch-exporter:9106']
+        scrape_interval: 60s
+
+      # Redis exporter
+      - job_name: 'redis-exporter'
+        static_configs:
+          - targets: ['redis-exporter:9121']
+
+# ── Grafana ────────────────────────────────────────────
+grafana:
+  adminUser: root
+  adminPassword: soldesk1.
+  persistence:
+    enabled: true
+    storageClassName: gp3
+    size: 5Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+  service:
+    type: ClusterIP
+
+  # Loki datasource
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      access: proxy
+      url: http://loki.monitoring.svc.cluster.local:3100
+      uid: loki
+      editable: false
+
+  dashboardProviders:
+    dashboardproviders.yaml:
+      apiVersion: 1
+      providers:
+        - name: 'default'
+          orgId: 1
+          folder: ''
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards/default
+
+  # Dashboard JSON will be loaded via ConfigMap sidecar
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+      labelValue: "1"
+      searchNamespace: monitoring
+
+  grafana.ini:
+    server:
+      root_url: "%(protocol)s://%(domain)s/grafana"
+      serve_from_sub_path: true
+
+# ── AlertManager ───────────────────────────────────────
+alertmanager:
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp3
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 2Gi
+    resources:
+      requests:
+        cpu: 50m
+        memory: 32Mi
+      limits:
+        cpu: 100m
+        memory: 64Mi
+
+  config:
+    global:
+      resolve_timeout: 5m
+    route:
+      group_by: ['alertname', 'severity']
+      group_wait: 10s
+      group_interval: 5m
+      repeat_interval: 1h
+      receiver: 'slack'
+      routes:
+        - match:
+            severity: critical
+          receiver: 'slack'
+          repeat_interval: 15m
+    receivers:
+      - name: 'slack'
+        slack_configs:
+          - api_url: 'SLACK_WEBHOOK_PLACEHOLDER'
+            send_resolved: true
+            channel: '#alerts'
+            title: '[{{ .Status | toUpper }}] {{ .GroupLabels.alertname }}'
+            text: >-
+              {{ range .Alerts }}
+              *severity*: {{ .Labels.severity }}
+              *summary*: {{ .Annotations.summary }}
+              *starts*: {{ .StartsAt.Format "2006-01-02 15:04:05" }}
+              ---
+              {{ end }}
+    inhibit_rules:
+      - source_match:
+          severity: 'critical'
+        target_match:
+          severity: 'warning'
+        equal: ['alertname']
+
+# ── Node Exporter ──────────────────────────────────────
+nodeExporter:
+  enabled: true
+  resources:
+    requests:
+      cpu: 30m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
+# ── kube-state-metrics ─────────────────────────────────
+kubeStateMetrics:
+  enabled: true
+
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 30m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
+# ── Prometheus Operator ────────────────────────────────
+prometheusOperator:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi

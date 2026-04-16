@@ -1,0 +1,82 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: read-api
+  namespace: ticketing
+  labels:
+    app: read-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: read-api
+  template:
+    metadata:
+      labels:
+        app: read-api
+    spec:
+      priorityClassName: ticketing-priority-read-api
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 80
+              podAffinityTerm:
+                labelSelector:
+                  matchExpressions:
+                    - key: app
+                      operator: In
+                      values:
+                        - worker-svc
+                        - worker-svc-ui
+                topologyKey: kubernetes.io/hostname
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: read-api
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: read-api
+      enableServiceLinks: false
+      containers:
+        - name: read-api
+          image: ticketing/ticketing-was:latest
+          imagePullPolicy: Always
+          command: ["uvicorn", "read_app:app", "--host", "0.0.0.0", "--port", "5000"]
+          ports:
+            - containerPort: 5000
+          envFrom:
+            - configMapRef:
+                name: ticketing-config
+            - secretRef:
+                name: ticketing-secrets
+          resources:
+            requests:
+              memory: "128Mi"
+              cpu: "100m"
+            limits:
+              memory: "256Mi"
+              cpu: "300m"
+          startupProbe:
+            httpGet:
+              path: /api/read/health
+              port: 5000
+            periodSeconds: 10
+            failureThreshold: 36
+          livenessProbe:
+            httpGet:
+              path: /api/read/health
+              port: 5000
+            initialDelaySeconds: 15
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: /api/read/health
+              port: 5000
+            initialDelaySeconds: 5
+            periodSeconds: 10

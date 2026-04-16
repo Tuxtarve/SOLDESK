@@ -25,21 +25,28 @@ DB_W="$(terraform output -raw rds_writer_endpoint)"
 DB_R="$(terraform output -raw rds_reader_endpoint)"
 REDIS_H="$(terraform output -raw redis_endpoint)"
 SQS_URL="$(terraform output -raw sqs_queue_url)"
+SQS_UI_URL="$(terraform output -raw sqs_ui_queue_url)"
+COGNITO_POOL="$(terraform output -raw cognito_user_pool_id)"
+COGNITO_CID="$(terraform output -raw cognito_client_id)"
 
 # ── 1) namespace: 이후 단계(Secret 생성 / DB init pod / ArgoCD sync)가
 # 전부 ticketing ns 위에서 돌기 때문에 선제 생성. ArgoCD가 나중에 git의
 # namespace.yaml을 적용해도 이미 존재 → no-op.
 kubectl apply -f "$ROOT/k8s/namespace.yaml"
 
-# ── 2) ticketing-secrets: DB endpoint / password / Redis / SQS 등
+# ── 2) ticketing-secrets: DB endpoint / password / Redis / SQS / Cognito 등
 # terraform output + DB_PASSWORD 환경변수를 합성. 민감값이라 git 미보관.
 kubectl create secret generic ticketing-secrets \
   --from-literal=DB_WRITER_HOST="$DB_W" \
   --from-literal=DB_READER_HOST="$DB_R" \
   --from-literal=DB_USER=root \
   --from-literal=DB_PASSWORD="$DB_PASSWORD" \
+  --from-literal=DB_NAME=ticketing \
   --from-literal=REDIS_HOST="$REDIS_H" \
   --from-literal=SQS_QUEUE_URL="$SQS_URL" \
+  --from-literal=SQS_QUEUE_INTERACTIVE_URL="$SQS_UI_URL" \
+  --from-literal=COGNITO_USER_POOL_ID="$COGNITO_POOL" \
+  --from-literal=COGNITO_CLIENT_ID="$COGNITO_CID" \
   -n ticketing \
   --dry-run=client -o yaml | kubectl apply -f -
 

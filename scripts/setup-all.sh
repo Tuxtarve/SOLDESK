@@ -145,38 +145,16 @@ ensure_kubectl() {
 
 ensure_kubectl
 
-# ── 0.5. 영구 EBS 볼륨 import (이전 destroy/apply 사이클에서 살아남은 볼륨 재사용) ──
-echo "=========================================="
-echo " [0.5] 모니터링 영구 EBS 볼륨 확인"
-echo "=========================================="
-REGION_FOR_IMPORT="$(terraform output -raw aws_region 2>/dev/null || echo "ap-northeast-2")"
-EBS_ID=$(aws ec2 describe-volumes \
-  --region "$REGION_FOR_IMPORT" \
-  --filters "Name=tag:Name,Values=ticketing-monitoring-data" "Name=tag:Persistent,Values=true" \
-  --query "Volumes[?State=='available' || State=='in-use'] | [0].VolumeId" \
-  --output text 2>/dev/null || echo "None")
-
-if [ -n "$EBS_ID" ] && [ "$EBS_ID" != "None" ]; then
-  if ! terraform state list 2>/dev/null | grep -q 'module.monitoring.aws_ebs_volume.monitoring_data'; then
-    echo "기존 EBS 볼륨 발견: $EBS_ID — terraform state에 import 합니다 (데이터 보존)"
-    terraform import 'module.monitoring.aws_ebs_volume.monitoring_data' "$EBS_ID"
-  else
-    echo "EBS 볼륨이 이미 state에 등록되어 있습니다: $EBS_ID"
-  fi
-else
-  echo "기존 EBS 볼륨 없음 — 새로 생성됩니다 (첫 적용)"
-fi
-
-# ── 0.6. tfvars의 옛 alb_listener_arn validity 검증 ──
 # destroy.sh를 거치지 않고 setup-all.sh 단독 실행 또는 destroy 실패 후
 # 재시도 시, tfvars에 옛 ALB ARN이 박혀 있으면 main.tf의 data
 # "aws_lb_listener" 가 NotFound로 첫 apply 자체를 fail시킨다.
 TFVARS="$TF_DIR/terraform.tfvars"
+REGION_PRE="$(terraform output -raw aws_region 2>/dev/null || echo "ap-northeast-2")"
 if [ -f "$TFVARS" ] && grep -q '^alb_listener_arn' "$TFVARS"; then
   CURRENT_ARN=$(grep '^alb_listener_arn' "$TFVARS" | sed 's/.*= *"//;s/".*//')
   if [ -n "$CURRENT_ARN" ]; then
     if ! aws elbv2 describe-listeners --listener-arns "$CURRENT_ARN" \
-        --region "$REGION_FOR_IMPORT" >/dev/null 2>&1; then
+        --region "$REGION_PRE" >/dev/null 2>&1; then
       echo "tfvars: 옛 alb_listener_arn이 invalid → 빈값으로 reset"
       sed -i 's|^alb_listener_arn.*|alb_listener_arn = ""|' "$TFVARS"
       sed -i 's|^frontend_callback_domain.*|frontend_callback_domain = ""|' "$TFVARS"
@@ -186,14 +164,14 @@ fi
 
 # ── 1. Terraform Apply ──
 echo "=========================================="
-echo " [1/13] Terraform Apply"
+echo " [1/14] Terraform Apply"
 echo "=========================================="
 terraform apply -auto-approve
 
 # ── 2. kubeconfig 설정 ──
 echo ""
 echo "=========================================="
-echo " [2/13] kubeconfig 설정"
+echo " [2/14] kubeconfig 설정"
 echo "=========================================="
 CLUSTER_NAME="$(terraform output -raw eks_cluster_name)"
 REGION="$(terraform output -raw aws_region)"
@@ -203,37 +181,48 @@ echo "kubeconfig 설정 완료"
 # ── 3. AWS Load Balancer Controller 설치 ──
 echo ""
 echo "=========================================="
-echo " [3/13] AWS Load Balancer Controller 설치"
+echo " [3/14] AWS Load Balancer Controller 설치"
 echo "=========================================="
 bash "$SCRIPTS/install-aws-load-balancer-controller.sh"
 
 # ── 4. Cluster Autoscaler 설치 ──
 echo ""
 echo "=========================================="
-echo " [4/13] Cluster Autoscaler 설치"
+echo " [4/14] Cluster Autoscaler 설치"
 echo "=========================================="
 bash "$SCRIPTS/install-cluster-autoscaler.sh"
 
-# ── 4.5. KEDA 설치 (SQS 큐 길이 기반 worker-svc 자동 스케일링) ──
+# ── 5. KEDA 설치 (SQS 큐 길이 기반 worker-svc 자동 스케일링) ──
 echo ""
 echo "=========================================="
-echo " [5/13] KEDA 설치"
+echo " [5/14] KEDA 설치"
 echo "=========================================="
 bash "$SCRIPTS/install-keda.sh"
 
-# ── 6. GitOps bootstrap: namespace + Secret ──
+# ── 5.5. kube-prometheus-stack 설치 (모니터링) ──
+echo ""
+echo "=========================================="
+echo " [6/14] kube-prometheus-stack 설치"
+echo "=========================================="
+if [[ -f "$SCRIPTS/install-monitoring.sh" ]]; then
+  bash "$SCRIPTS/install-monitoring.sh"
+else
+  echo "WARNING: install-monitoring.sh 없음 — 모니터링 설치 건너뜀"
+fi
+
+# ── 7. GitOps bootstrap: namespace + Secret ──
 # ArgoCD가 k8s/ 매니페스트를 sync 하기 전에 필요한 최소한의 리소스.
 # 나머지(Deployment/Service/HPA/Ingress/ScaledObject...)는 ArgoCD가 생성.
 echo ""
 echo "=========================================="
-echo " [6/13] GitOps bootstrap (namespace + secret)"
+echo " [7/14] GitOps bootstrap (namespace + secret)"
 echo "=========================================="
 bash "$SCRIPTS/bootstrap-ticketing-secret.sh"
 
-# ── 7. DB 스키마 초기화 ──
+# ── 8. DB 스키마 초기화 ──
 echo ""
 echo "=========================================="
-echo " [7/13] DB 스키마 초기화"
+echo " [8/14] DB 스키마 초기화"
 echo "=========================================="
 DB_WRITER_HOST="$(terraform output -raw rds_writer_endpoint)"
 
@@ -242,28 +231,23 @@ kubectl run mysql-init --image=mysql:8.0 --restart=Never -n ticketing \
 echo "MySQL 클라이언트 파드 대기 중..."
 kubectl wait --for=condition=Ready pod/mysql-init -n ticketing --timeout=120s
 
-cat "$ROOT/db/schema.sql" | kubectl exec -i mysql-init -n ticketing -- \
+cat "$ROOT/db-schema/create.sql" | kubectl exec -i mysql-init -n ticketing -- \
   mysql --force --default-character-set=utf8mb4 -h "$DB_WRITER_HOST" -u root -p"$DB_PASSWORD" 2>&1 || true
 
-cat "$ROOT/db/seed.sql" | kubectl exec -i mysql-init -n ticketing -- \
-  mysql --default-character-set=utf8mb4 -h "$DB_WRITER_HOST" -u root -p"$DB_PASSWORD" 2>&1 || true
+cat "$ROOT/db-schema/Insert.sql" | kubectl exec -i mysql-init -n ticketing -- \
+  mysql --default-character-set=utf8mb4 -h "$DB_WRITER_HOST" -u root -p"$DB_PASSWORD" ticketing 2>&1 || true
 
 kubectl delete pod mysql-init -n ticketing --wait=false
 echo "DB 스키마 + 시드 데이터 적용 완료"
 
-# ── 8. Docker 이미지 빌드 & ECR Push ──
+# ── 9. Docker 이미지 빌드 & ECR Push ──
 # GitOps 순서: ArgoCD가 Deployment를 만들기 전에 이미지가 ECR에 올라가 있어야
 # 첫 pull이 성공한다. 이미지가 없어도 ArgoCD는 Deployment를 만들고 파드는
 # ImagePullBackOff로 기다리다가 이미지가 올라오면 자동 복구되긴 하지만,
 # Synced+Healthy 상태를 일찍 달성하기 위해 ArgoCD 설치 직전에 push 한다.
-#
-# kubectl rollout restart는 더 이상 하지 않는다:
-#   - 이 시점에는 Deployment가 아직 없다 (ArgoCD가 step 9에서 만듦)
-#   - ArgoCD 설치 이후엔 수동 rollout restart가 드리프트로 잡힐 수 있고,
-#     이미지 갱신은 git의 kustomization image tag commit으로 처리해야 깔끔하다.
 echo ""
 echo "=========================================="
-echo " [8/13] Docker 이미지 빌드 & ECR Push"
+echo " [9/14] Docker 이미지 빌드 & ECR Push"
 echo "=========================================="
 ACCOUNT_ID="$(terraform output -raw aws_account_id)"
 ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
@@ -273,35 +257,40 @@ if ! command -v docker >/dev/null 2>&1; then
   echo "  ArgoCD가 Deployment를 만들면 ImagePullBackOff 상태로 대기함."
   echo "  나중에 GitHub Actions (build-and-publish.yml) 또는 CloudShell에서 push:"
   echo "    aws ecr get-login-password --region $REGION | docker login --username AWS --password-stdin $ECR_REGISTRY"
-  echo "    for SVC in event-svc reserv-svc worker-svc; do"
+  echo "    for SVC in ticketing-was worker-svc; do"
   echo "      docker build -t $ECR_REGISTRY/ticketing/\$SVC:latest services/\$SVC"
   echo "      docker push $ECR_REGISTRY/ticketing/\$SVC:latest"
   echo "    done"
+  echo "    docker build -t $ECR_REGISTRY/ticketing/frontend:latest frontend/"
+  echo "    docker push $ECR_REGISTRY/ticketing/frontend:latest"
 else
   aws ecr get-login-password --region "$REGION" | \
     docker login --username AWS --password-stdin "$ECR_REGISTRY"
-  for SVC in event-svc reserv-svc worker-svc; do
+  for SVC in ticketing-was worker-svc; do
     echo "빌드 & 푸시: $SVC"
     docker build -t "${ECR_REGISTRY}/ticketing/${SVC}:latest" "$ROOT/services/${SVC}"
     docker push "${ECR_REGISTRY}/ticketing/${SVC}:latest"
   done
-  echo "이미지 push 완료 (이 시점엔 아직 Deployment 없음 — ArgoCD가 step 9에서 생성)"
+  echo "빌드 & 푸시: frontend"
+  docker build -t "${ECR_REGISTRY}/ticketing/frontend:latest" "$ROOT/frontend"
+  docker push "${ECR_REGISTRY}/ticketing/frontend:latest"
+  echo "이미지 push 완료 (이 시점엔 아직 Deployment 없음 — ArgoCD가 step 10에서 생성)"
 fi
 
-# ── 9. ArgoCD 설치 + ticketing Application 등록 ──
+# ── 10. ArgoCD 설치 + ticketing Application 등록 ──
 echo ""
 echo "=========================================="
-echo " [9/13] ArgoCD 설치 + Application 등록"
+echo " [10/14] ArgoCD 설치 + Application 등록"
 echo "=========================================="
 bash "$SCRIPTS/install-argocd.sh"
 
-# ── 10. ArgoCD Application Synced + Healthy 대기 ──
+# ── 11. ArgoCD Application Synced + Healthy 대기 ──
 # ArgoCD가 git을 폴링하여 k8s/ 전체를 cluster에 적용. Deployment가 생성되면
 # pod가 위에서 push한 이미지를 pull하고 Ready 상태가 되어야 Healthy 판정.
 # 첫 sync는 보통 1~3분 내 완료. Ingress가 ALB를 provision하는 데 추가 1~2분.
 echo ""
 echo "=========================================="
-echo " [10/13] ArgoCD Application Synced 대기"
+echo " [11/14] ArgoCD Application Synced 대기"
 echo "=========================================="
 echo "ticketing Application 상태 폴링 (최대 10분)..."
 for i in $(seq 1 60); do
@@ -321,10 +310,10 @@ for i in $(seq 1 60); do
 done
 kubectl get pods -n ticketing
 
-# ── 11. 프론트엔드 S3 배포 ──
+# ── 12. 프론트엔드 S3 배포 ──
 echo ""
 echo "=========================================="
-echo " [11/13] 프론트엔드 S3 배포"
+echo " [12/14] 프론트엔드 S3 배포"
 echo "=========================================="
 BUCKET="ticketing-frontend-${ACCOUNT_ID}"
 COGNITO_CLIENT_ID="$(terraform output -raw cognito_client_id)"
@@ -347,13 +336,13 @@ fi
 
 CLOUDFRONT_DOMAIN="$(terraform output -raw cloudfront_domain)"
 
-# ── 9. API Gateway VPC Link Integration 설정 ──
+# ── 13. API Gateway VPC Link Integration 설정 ──
 # Internal ALB가 ingress로 만들어진 후, listener ARN을 추출하여
 # tfvars에 박고 terraform apply 재실행 → API GW Integration/Route 생성
 # 흐름: 브라우저 → CloudFront → API GW → VPC Link → Internal ALB → EKS
 echo ""
 echo "=========================================="
-echo " [12/13] API Gateway VPC Link Integration 연결"
+echo " [13/14] API Gateway VPC Link Integration 연결"
 echo "=========================================="
 echo "Internal ALB 주소 대기 중 (ingress가 ALB 만들 때까지)..."
 for i in $(seq 1 30); do
@@ -409,61 +398,19 @@ else
     fi
   fi
 
-  # ── 10. Grafana 대시보드 HTTP API 프로비저닝 ─────────────────
-  # Prometheus scrape 설정은 userdata.sh의 ${alb_dns} 템플릿 변수로 이미
-  # 처리됨 (monitoring 모듈에 user_data_replace_on_change=true). 두 번째
-  # terraform apply에서 alb_listener_arn이 tfvars에 박히는 순간 user_data가
-  # 바뀌고 인스턴스가 자동 재생성되어 올바른 scrape_configs로 부팅한다.
-  # 따라서 별도의 SSM push는 불필요.
-  #
-  # Grafana 대시보드 JSON은 Grafana HTTP API로 직접 POST한다. 이 경로는
-  # SSM에 의존하지 않고, Web_SG가 3000 포트를 0.0.0.0/0로 열어둔 것을
-  # 활용한다. SSM이 불안정한 AMI 조합에서도 동작한다.
+  # ── 14. 모니터링 확인 ──
+  # kube-prometheus-stack이 EKS 클러스터 내에 설치되어 있으므로
+  # Grafana/Prometheus는 kubectl port-forward로 접근한다.
   echo ""
   echo "=========================================="
-  echo " [13/13] Grafana 대시보드 HTTP API 프로비저닝"
+  echo " [14/14] 모니터링 확인"
   echo "=========================================="
-  MONITORING_IP="$(terraform output -raw monitoring_ec2_ip 2>/dev/null || true)"
-  DASH_FILE="$ROOT/monitoring/grafana/dashboards/ticketing-overview.json"
-  if [[ -z "$MONITORING_IP" || ! -f "$DASH_FILE" ]]; then
-    echo "WARNING: monitoring_ec2_ip 또는 대시보드 파일 누락 — 건너뜀" >&2
+  if kubectl get namespace monitoring >/dev/null 2>&1; then
+    echo "kube-prometheus-stack이 monitoring namespace에 설치됨"
+    echo "  Grafana:    kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80"
+    echo "  Prometheus: kubectl port-forward -n monitoring svc/kube-prometheus-stack-prometheus 9090:9090"
   else
-    # Grafana가 HTTP 응답할 때까지 대기 (docker-compose up 직후에는 부팅 중)
-    echo "Grafana HTTP 응답 대기 중 (http://$MONITORING_IP:3000)..."
-    for i in $(seq 1 30); do
-      if curl -fsS -o /dev/null "http://$MONITORING_IP:3000/api/health" 2>/dev/null; then
-        echo "  Grafana Ready ($((i*5))s)"
-        break
-      fi
-      [[ "$i" -eq 30 ]] && { echo "WARNING: Grafana 2.5분 내 응답 없음 — 건너뜀" >&2; MONITORING_IP=""; break; }
-      sleep 5
-    done
-
-    if [[ -n "$MONITORING_IP" ]]; then
-      # userdata.sh의 GF_SECURITY_ADMIN_USER/PASSWORD 와 동기
-      GF_USER="root"
-      GF_PASS="soldesk1."
-
-      # 대시보드 업로드 페이로드: { dashboard: <JSON>, overwrite: true, folderId: 0 }
-      # jq 의존 없이 printf로 JSON 조립 (Git Bash에 jq 없는 경우 대응)
-      PAYLOAD=$(mktemp)
-      trap 'rm -f "$PAYLOAD"' EXIT
-      DASH_CONTENT=$(cat "$DASH_FILE")
-      printf '{"dashboard": %s, "overwrite": true, "folderId": 0, "message": "setup-all.sh"}' \
-        "$DASH_CONTENT" > "$PAYLOAD"
-
-      HTTP_CODE=$(curl -s -o /tmp/gf_resp.json -w "%{http_code}" \
-        -u "$GF_USER:$GF_PASS" -H "Content-Type: application/json" \
-        -X POST "http://$MONITORING_IP:3000/api/dashboards/db" \
-        --data-binary "@$PAYLOAD")
-      if [[ "$HTTP_CODE" == "200" ]]; then
-        echo "Grafana 대시보드 업로드 완료 (HTTP 200)"
-      else
-        echo "WARNING: Grafana 업로드 실패 (HTTP $HTTP_CODE)" >&2
-        cat /tmp/gf_resp.json >&2 || true
-      fi
-      rm -f /tmp/gf_resp.json
-    fi
+    echo "WARNING: monitoring namespace 없음 — install-monitoring.sh 확인 필요"
   fi
 fi
 
@@ -475,6 +422,6 @@ API_GW_ENDPOINT="$(terraform output -raw api_gateway_endpoint 2>/dev/null || ech
 echo "  프론트엔드:    https://${CLOUDFRONT_DOMAIN}"
 echo "  API (사용자):  https://${CLOUDFRONT_DOMAIN}/api/events"
 echo "  API GW (직접): ${API_GW_ENDPOINT}/api/events"
-echo "  Internal ALB:  ${ALB_ADDRESS} (VPC 내부에서만 접근 가능)"
+echo "  Internal ALB:  ${ALB_ADDRESS:-미확인} (VPC 내부에서만 접근 가능)"
 echo "  kubectl get nodes"
 echo "  kubectl get pods -n ticketing"

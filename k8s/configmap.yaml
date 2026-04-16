@@ -4,21 +4,75 @@ metadata:
   name: ticketing-config
   namespace: ticketing
 data:
+  # ── 인프라 기본 ────────────────────────────────────────────────────────────
   AWS_REGION: "ap-northeast-2"
   DB_NAME: "ticketing"
   DB_PORT: "3306"
   REDIS_PORT: "6379"
-  NODE_ENV: "production"
-  LOG_LEVEL: "info"
+  DB_READ_REPLICA_ENABLED: "false"
+
+  # ── Redis / 캐시 ──────────────────────────────────────────────────────────
+  CACHE_ENABLED: "true"
+  CACHE_WARMUP_ENABLED: "true"
+  CACHE_WARMUP_TOTAL_RUNS: "5"
+  CACHE_WARMUP_INTERVAL_SEC: "60"
+  CACHE_WARMUP_REPEAT_LIGHT: "false"
+  REDIS_MAX_CONNECTIONS: "50"
+  REDIS_SOCKET_TIMEOUT_SEC: "5"
+  REDIS_CONNECT_TIMEOUT_SEC: "3"
+  REDIS_HEALTH_CHECK_INTERVAL_SEC: "30"
+  ELASTICACHE_LOGICAL_DB_CACHE: "0"
+  ELASTICACHE_LOGICAL_DB_BOOKING: "1"
+  BOOKING_STATE_ENABLED: "true"
+
+  # ── 콘서트 ────────────────────────────────────────────────────────────────
+  CONCERT_CACHE_WARMUP_MODE: "minimal"
+  CONCERT_FIFO_SHARDS: "64"
+  CONCERT_SHOWS_META_TTL_SEC: "120"
+  CONCERTS_LIST_CACHE_TTL_SEC: "0"
+  CONCERT_DETAIL_CACHE_TTL_SEC: "0"
+
+  # ── SQS (write-api + worker-svc 공통) ─────────────────────────────────────
+  SQS_BOTO_MAX_ATTEMPTS: "5"
+  SQS_BOTO_RETRY_MODE: "adaptive"
+  SQS_CONNECT_TIMEOUT_SEC: "5"
+  SQS_READ_TIMEOUT_SEC: "30"
+  SQS_RECEIVE_MAX_MESSAGES: "10"
+  SQS_WAIT_TIME_SECONDS: "20"
+  SQS_POLL_ERROR_BACKOFF_SEC: "3"
+
+  # ── Worker 설정 ───────────────────────────────────────────────────────────
+  WORKER_SQS_BATCH_CONCURRENCY: "10"
+  WORKER_SQS_POLLERS: "2"
+  WORKER_DB_MAX_CONCURRENT: "20"
+
+  # ── Booking TTL ───────────────────────────────────────────────────────────
+  BOOKING_QUEUED_TTL_SEC: "7200"
+  BOOKING_QUEUE_COUNTER_TTL_SEC: "7200"
+  BOOKING_RESULT_TTL_SEC: "3600"
+
+  # ── 콘서트 좌석 상태 ─────────────────────────────────────────────────────
+  CONCERT_SEAT_HOLD_TTL_SEC: "600"
+  CONCERT_CONFIRMED_SET_TTL_SEC: "0"
+  CONCERT_CONFIRMED_SET_GRACE_SEC: "21600"
+  CONCERT_REMAIN_SUBTRACT_WR_BACKLOG: "false"
+
+  # ── Waiting Room ──────────────────────────────────────────────────────────
+  WR_COUNTER_TTL_SEC: "7200"
+
+  # ── Cognito (deploy 시 ticketing-secrets 또는 envsubst로 주입) ────────────
+  # COGNITO_USER_POOL_ID, COGNITO_CLIENT_ID 는 Secret에서 관리
 ---
-# Secrets는 AWS Secrets Manager 또는 kubectl secret으로 관리
+# Secrets는 kubectl 또는 k8s/scripts/apply-secrets-from-terraform.sh 로 관리:
 # kubectl create secret generic ticketing-secrets \
 #   --from-literal=DB_WRITER_HOST=<rds-writer-endpoint> \
 #   --from-literal=DB_READER_HOST=<rds-reader-endpoint> \
 #   --from-literal=DB_USER=root \
 #   --from-literal=DB_PASSWORD=<YOUR_DB_PASSWORD> \
+#   --from-literal=ELASTICACHE_PRIMARY_ENDPOINT=<elasticache-endpoint> \
 #   --from-literal=REDIS_HOST=<elasticache-endpoint> \
-#   --from-literal=SQS_QUEUE_URL=<sqs-url> \
+#   --from-literal=SQS_QUEUE_URL=<sqs-fifo-url> \
+#   --from-literal=SQS_QUEUE_INTERACTIVE_URL=<sqs-ui-fifo-url> \
 #   --from-literal=COGNITO_USER_POOL_ID=<pool-id> \
 #   --from-literal=COGNITO_CLIENT_ID=<client-id> \
 #   -n ticketing

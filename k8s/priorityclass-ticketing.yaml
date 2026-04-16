@@ -1,0 +1,39 @@
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: ticketing-priority-write-api
+value: 200000
+globalDefault: false
+description: "write-api -- top priority"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: ticketing-priority-read-api
+value: 190000
+globalDefault: false
+description: "read-api"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: ticketing-priority-worker-ui
+value: 100000
+globalDefault: false
+description: "GUI queue (worker-svc-ui) -- higher than bulk worker"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: ticketing-priority-worker-bulk
+value: 10000
+globalDefault: false
+description: "bulk queue (worker-svc) -- lowest priority"
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: ticketing-priority-ops
+value: 50000
+globalDefault: false
+description: "one-off tools / DB tunnel -- above bulk worker only"

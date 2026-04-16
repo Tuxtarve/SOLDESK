@@ -22,12 +22,6 @@ variable "db_password" {
   sensitive   = true
 }
 
-variable "key_name" {
-  description = "EC2 모니터링 서버 SSH 키페어 이름"
-  type        = string
-  default     = ""
-}
-
 variable "github_repo" {
   description = "GitHub 리포지토리 (owner/repo)"
   type        = string
@@ -54,13 +48,6 @@ variable "frontend_callback_domain" {
   description = "Cognito 콜백/로그아웃 URL 생성용 프론트엔드 도메인 (CloudFront). setup-all.sh가 자동 주입."
   type        = string
   default     = ""
-}
-
-variable "slack_webhook_url" {
-  description = "Slack Incoming Webhook URL for Alertmanager"
-  type        = string
-  default     = ""
-  sensitive   = true
 }
 
 variable "cognito_domain_prefix" {

@@ -28,14 +28,17 @@ for cmd in kubectl aws; do
   fi
 done
 
-# SQS URL / region — terraform output 우선, 실패 시 하드코딩 fallback (poll-replicas.sh와 동일 정책)
+# SQS URL / region — terraform output 우선, 실패 시 하드코딩 fallback
 SQS_URL=""
+SQS_UI_URL=""
 REGION=""
 if [[ -d "$TF_DIR" ]]; then
   SQS_URL=$(terraform -chdir="$TF_DIR" output -raw sqs_queue_url 2>/dev/null || true)
+  SQS_UI_URL=$(terraform -chdir="$TF_DIR" output -raw sqs_ui_queue_url 2>/dev/null || true)
   REGION=$(terraform -chdir="$TF_DIR" output -raw aws_region 2>/dev/null || true)
 fi
 SQS_URL="${SQS_URL:-https://sqs.ap-northeast-2.amazonaws.com/734772058616/ticketing-reservation.fifo}"
+SQS_UI_URL="${SQS_UI_URL:-https://sqs.ap-northeast-2.amazonaws.com/734772058616/ticketing-reservation-ui.fifo}"
 REGION="${REGION:-ap-northeast-2}"
 
 # ANSI color (Git Bash mintty / Linux / macOS 호환)
@@ -191,7 +194,7 @@ while true; do
   fi
 
   # ── SQS ────────────────────────────────────────────────────
-  printf "\n${BOLD}SQS${NC}  ${DIM}(ticketing-reservation.fifo)${NC}\n"
+  printf "\n${BOLD}SQS${NC}  ${DIM}(reservation.fifo + reservation-ui.fifo)${NC}\n"
   SQS_ATTR=$(aws sqs get-queue-attributes \
     --queue-url "$SQS_URL" \
     --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible \
@@ -200,17 +203,33 @@ while true; do
     --output text 2>/dev/null || echo "? ?")
   VISIBLE=$(echo "$SQS_ATTR" | awk '{print $1}')
   INFLIGHT=$(echo "$SQS_ATTR" | awk '{print $2}')
-  printf "  visible   : ${BOLD}%s${NC}\n" "${VISIBLE:-?}"
-  printf "  in-flight : %s\n" "${INFLIGHT:-?}"
+  printf "  reservation.fifo:\n"
+  printf "    visible   : ${BOLD}%s${NC}\n" "${VISIBLE:-?}"
+  printf "    in-flight : %s\n" "${INFLIGHT:-?}"
 
-  # ── EVENT / RESERV alive check ─────────────────────────────
-  printf "\n${BOLD}EVENT / RESERV${NC} ${DIM}(alive check)${NC}\n"
-  E_LINE=$(printf '%s\n' "$DEPLOY_LINES" | awk '$1=="event-svc"')
-  R_LINE=$(printf '%s\n' "$DEPLOY_LINES" | awk '$1=="reserv-svc"')
-  E_READY=$(echo "$E_LINE" | awk '{print $2}')
-  R_READY=$(echo "$R_LINE" | awk '{print $2}')
-  printf "  event-svc  : %s\n" "${E_READY:-?}"
-  printf "  reserv-svc : %s\n" "${R_READY:-?}"
+  SQS_UI_ATTR=$(aws sqs get-queue-attributes \
+    --queue-url "$SQS_UI_URL" \
+    --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible \
+    --region "$REGION" \
+    --query 'Attributes.[ApproximateNumberOfMessages, ApproximateNumberOfMessagesNotVisible]' \
+    --output text 2>/dev/null || echo "? ?")
+  UI_VISIBLE=$(echo "$SQS_UI_ATTR" | awk '{print $1}')
+  UI_INFLIGHT=$(echo "$SQS_UI_ATTR" | awk '{print $2}')
+  printf "  reservation-ui.fifo:\n"
+  printf "    visible   : ${BOLD}%s${NC}\n" "${UI_VISIBLE:-?}"
+  printf "    in-flight : %s\n" "${UI_INFLIGHT:-?}"
+
+  # ── READ / WRITE API alive check ────────────────────────────
+  printf "\n${BOLD}READ / WRITE API${NC} ${DIM}(alive check)${NC}\n"
+  RA_LINE=$(printf '%s\n' "$DEPLOY_LINES" | awk '$1=="read-api"')
+  WA_LINE=$(printf '%s\n' "$DEPLOY_LINES" | awk '$1=="write-api"')
+  WUI_LINE=$(printf '%s\n' "$DEPLOY_LINES" | awk '$1=="worker-svc-ui"')
+  RA_READY=$(echo "$RA_LINE" | awk '{print $2}')
+  WA_READY=$(echo "$WA_LINE" | awk '{print $2}')
+  WUI_READY=$(echo "$WUI_LINE" | awk '{print $2}')
+  printf "  read-api      : %s\n" "${RA_READY:-?}"
+  printf "  write-api     : %s\n" "${WA_READY:-?}"
+  printf "  worker-svc-ui : %s\n" "${WUI_READY:-?}"
 
   # diff 비교용 이전 상태 업데이트 (NEW 표기는 한 iteration만)
   PREV_NODES="$CURR_NODES"

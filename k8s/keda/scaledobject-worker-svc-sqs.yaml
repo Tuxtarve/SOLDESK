@@ -1,0 +1,31 @@
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: worker-svc-sqs
+  namespace: ticketing
+  labels:
+    app: worker-svc
+  annotations:
+    autoscaling.keda.sh/paused: "true"
+spec:
+  scaleTargetRef:
+    name: worker-svc
+  pollingInterval: 5
+  cooldownPeriod: 300
+  minReplicaCount: 2
+  maxReplicaCount: 4
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 180
+  triggers:
+    - type: aws-sqs-queue
+      authenticationRef:
+        name: keda-worker-sqs-aws
+      metadata:
+        awsRegion: ap-northeast-2
+        queueURLFromEnv: SQS_QUEUE_URL
+        queueLength: "2"
+        activationQueueLength: "1"
+        scaleOnInFlight: "true"

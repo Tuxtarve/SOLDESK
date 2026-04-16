@@ -1,17 +1,27 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Worker-svc replica + SQS 큐 길이 폴링
-# 5초마다 CSV 한 줄 출력 → 파일로 redirect해서 그래프용
+# 5초마다 CSV 한 줄 출력 -> 파일로 redirect해서 그래프용
 #
 # 사용:
 #   ./poll-replicas.sh > replicas.csv
 #   (Ctrl+C로 종료)
-set -e
+set -euo pipefail
 
 NS="ticketing"
 DEPLOY="worker-svc"
 INTERVAL=${1:-5}
-SQS_URL="https://sqs.ap-northeast-2.amazonaws.com/734772058616/ticketing-reservation.fifo"
-REGION="ap-northeast-2"
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+TF_DIR="$ROOT/terraform"
+
+SQS_URL=""
+REGION=""
+if [[ -d "$TF_DIR" ]]; then
+  SQS_URL=$(terraform -chdir="$TF_DIR" output -raw sqs_queue_url 2>/dev/null || true)
+  REGION=$(terraform -chdir="$TF_DIR" output -raw aws_region 2>/dev/null || true)
+fi
+SQS_URL="${SQS_URL:-https://sqs.ap-northeast-2.amazonaws.com/734772058616/ticketing-reservation.fifo}"
+REGION="${REGION:-ap-northeast-2}"
 
 echo "ts,replicas,ready,queue_visible,queue_in_flight"
 

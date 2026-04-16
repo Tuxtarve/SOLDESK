@@ -1,66 +1,48 @@
-# Cognito JSON 은 scripts/apply-ticketing-k8s.sh 가 envsubst 로 치환합니다.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: ticketing-ingress
   namespace: ticketing
   annotations:
-    # internal ALB — VPC 내부에서만 접근 가능. API Gateway VPC Link만이 호출 가능
+    # internal ALB -- VPC 내부에서만 접근 가능. API Gateway VPC Link만이 호출 가능
     alb.ingress.kubernetes.io/scheme: internal
     alb.ingress.kubernetes.io/target-type: ip
     alb.ingress.kubernetes.io/listen-ports: '[{"HTTP":80}]'
-    alb.ingress.kubernetes.io/healthcheck-path: /health
+    alb.ingress.kubernetes.io/healthcheck-path: /api/read/health
 spec:
   ingressClassName: alb
   rules:
     - http:
         paths:
-          - path: /api/events
+          # Read API
+          - path: /api/read
             pathType: Prefix
             backend:
               service:
-                name: event-svc
+                name: read-api
                 port:
-                  number: 3000
-          - path: /api/reservations
+                  number: 5000
+          # Write API
+          - path: /api/write
             pathType: Prefix
             backend:
               service:
-                name: reserv-svc
+                name: write-api
                 port:
-                  number: 3001
-          - path: /api/payments
-            pathType: Prefix
-            backend:
-              service:
-                name: reserv-svc
-                port:
-                  number: 3001
+                  number: 5001
+          # Health check
           - path: /health
             pathType: Prefix
             backend:
               service:
-                name: event-svc
+                name: read-api
                 port:
-                  number: 3000
-          - path: /event-metrics
+                  number: 5000
+          # Catch-all
+          - path: /
             pathType: Prefix
             backend:
               service:
-                name: event-svc
+                name: read-api
                 port:
-                  number: 3000
-          - path: /reserv-metrics
-            pathType: Prefix
-            backend:
-              service:
-                name: reserv-svc
-                port:
-                  number: 3001
-          - path: /worker-metrics
-            pathType: Prefix
-            backend:
-              service:
-                name: worker-svc
-                port:
-                  number: 3002
+                  number: 5000
