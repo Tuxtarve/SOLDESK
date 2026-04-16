@@ -134,11 +134,9 @@
 
   function getStoredUserId() {
     if (window.APP_RUNTIME && typeof window.APP_RUNTIME.getStoredUserId === 'function') {
-      const raw = String(window.APP_RUNTIME.getStoredUserId() || '').trim();
-      return /^\d+$/.test(raw) && Number(raw) > 0 ? raw : '';
+      return String(window.APP_RUNTIME.getStoredUserId() || '').trim();
     }
-    const raw = String(localStorage.getItem('user_id') || sessionStorage.getItem('user_id') || '').trim();
-    return /^\d+$/.test(raw) && Number(raw) > 0 ? raw : '';
+    return String(localStorage.getItem('user_id') || sessionStorage.getItem('user_id') || '').trim();
   }
 
   function createSeatKey(row, col) {
