@@ -122,6 +122,9 @@ resource "aws_apigatewayv2_route" "api_public" {
     # 형 프론트엔드 공개 경로 (비로그인 조회 가능)
     "GET /api/read/{proxy+}",
     "GET /api/read/health",
+    # CORS preflight — Authorization 헤더 포함 요청 시 브라우저가 OPTIONS를 먼저 보냄
+    # ANY 라우트의 JWT authorizer가 OPTIONS를 401 차단하므로 명시적 public 라우트 필요
+    "OPTIONS /api/{proxy+}",
   ]) : toset([])
 
   api_id    = aws_apigatewayv2_api.main.id
