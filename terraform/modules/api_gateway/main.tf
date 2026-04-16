@@ -119,11 +119,26 @@ resource "aws_apigatewayv2_route" "api_public" {
     "GET /event-metrics",
     "GET /reserv-metrics",
     "GET /worker-metrics",
-    # 형 프론트엔드 공개 경로 (비로그인 조회 가능)
-    "GET /api/read/{proxy+}",
+    # 공개 조회: 영화
+    "GET /api/read/movies",
+    "GET /api/read/movies/detail/{movie_id}",
+    "GET /api/read/movies/booking-bootstrap",
+    "GET /api/read/movie/{movie_id}",
+    # 공개 조회: 극장
+    "GET /api/read/theaters",
+    "GET /api/read/theaters/bootstrap",
+    "GET /api/read/theaters/remain-overrides",
+    "GET /api/read/theater/{theater_id}",
+    # 공개 조회: 콘서트
+    "GET /api/read/concerts",
+    "GET /api/read/concert/{concert_id}",
+    "GET /api/read/concert/{concert_id}/booking-bootstrap",
+    "GET /api/read/concert/{concert_id}/booking-holds",
+    # 공개: 헬스체크, 대기열, 예매상태 폴링
     "GET /api/read/health",
-    # CORS preflight — Authorization 헤더 포함 요청 시 브라우저가 OPTIONS를 먼저 보냄
-    # ANY 라우트의 JWT authorizer가 OPTIONS를 401 차단하므로 명시적 public 라우트 필요
+    "GET /api/read/waiting-room/{proxy+}",
+    "GET /api/read/booking/{proxy+}",
+    # CORS preflight
     "OPTIONS /api/{proxy+}",
   ]) : toset([])
 
