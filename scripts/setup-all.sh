@@ -281,42 +281,52 @@ else
   echo "이미지 push 완료 (이 시점엔 아직 Deployment 없음 — ArgoCD가 step 10에서 생성)"
 fi
 
-# ── 9.5. kustomization.yaml 이미지 URL 을 팀원 계정 ECR 로 자동 교체 ──
-# k8s/kustomization.yaml 에 박힌 원저자 계정 ID 를 현재 팀원 계정 ID 로
-# 교체한 뒤 fork 레포에 자동 커밋·푸시한다. ArgoCD 는 git 을 단일 진실로
-# 삼고 있어서, 이 값이 틀리면 step 9 에서 본인 ECR 에 이미지를 push 해도
-# ArgoCD 는 원저자 ECR 로 pull 시도 → ImagePullBackOff 로 배포 실패.
+# ── 9.5. PLACEHOLDER_ACCOUNT_ID → 팀원 계정 ID 자동 치환 ──
+# K8s 매니페스트에 PLACEHOLDER_ACCOUNT_ID 로 표기된 계정 ID 자리들(ECR 이미지
+# registry, IAM role ARN)을 현재 팀원 계정 ID 로 일괄 치환한 뒤 fork 레포에
+# 자동 커밋·푸시한다. ArgoCD 는 git 을 단일 진실로 삼으므로, 이 값이 틀리면
+# ImagePullBackOff(잘못된 ECR) 또는 IRSA token 실패(존재하지 않는 role ARN)로
+# 배포가 터진다.
 echo ""
 echo "=========================================="
-echo " [9.5/14] kustomization.yaml ECR URL 자동 교체"
+echo " [9.5/14] PLACEHOLDER_ACCOUNT_ID → ${ACCOUNT_ID} 자동 치환"
 echo "=========================================="
-KUSTOMIZATION="$ROOT/k8s/kustomization.yaml"
-if [[ -f "$KUSTOMIZATION" ]]; then
-  # 12자리 AWS 계정 ID + ".dkr.ecr." 패턴을 현재 팀원 ACCOUNT_ID 로 치환
-  # (macOS/Linux/Git Bash 모두 동작하도록 임시파일 경유 — sed -i 호환성 회피)
-  TMP_KZ="$(mktemp)"
-  sed "s|[0-9]\{12\}\.dkr\.ecr\.|${ACCOUNT_ID}.dkr.ecr.|g" "$KUSTOMIZATION" > "$TMP_KZ"
-  mv "$TMP_KZ" "$KUSTOMIZATION"
-
-  if git -C "$ROOT" diff --quiet k8s/kustomization.yaml; then
-    echo "kustomization.yaml 이미 본인 계정(${ACCOUNT_ID}) — 교체 불필요"
+PLACEHOLDER_FILES=(
+  "k8s/kustomization.yaml"        # ECR 이미지 registry
+  "k8s/sqs-service-account.yaml"  # KEDA IRSA role ARN
+)
+CHANGED_FILES=()
+for REL in "${PLACEHOLDER_FILES[@]}"; do
+  FULL="$ROOT/$REL"
+  [[ -f "$FULL" ]] || { echo "WARN: $REL 없음 — 건너뜀" >&2; continue; }
+  # 임시파일 경유 (macOS/Linux/Git Bash 모두 sed -i 호환성 회피)
+  TMP="$(mktemp)"
+  sed "s|PLACEHOLDER_ACCOUNT_ID|${ACCOUNT_ID}|g" "$FULL" > "$TMP"
+  if ! cmp -s "$TMP" "$FULL"; then
+    mv "$TMP" "$FULL"
+    CHANGED_FILES+=("$REL")
   else
-    # git user 미설정 시 fallback (setup-all 이 만드는 커밋 전용 로컬값)
-    git -C "$ROOT" config user.email >/dev/null 2>&1 \
-      || git -C "$ROOT" config user.email "setup-all@local"
-    git -C "$ROOT" config user.name  >/dev/null 2>&1 \
-      || git -C "$ROOT" config user.name  "setup-all"
-
-    git -C "$ROOT" add k8s/kustomization.yaml
-    git -C "$ROOT" commit -m "chore: kustomization ECR → account ${ACCOUNT_ID}" >/dev/null
-    if git -C "$ROOT" push origin FINAL; then
-      echo "kustomization ECR URL 교체 + push 완료 → ArgoCD 가 step 11 에서 sync"
-    else
-      echo "WARN: git push 실패 — 수동으로 'git push origin FINAL' 실행 후 ArgoCD sync 필요" >&2
-    fi
+    rm -f "$TMP"
   fi
+done
+
+if [[ ${#CHANGED_FILES[@]} -eq 0 ]]; then
+  echo "placeholder 이미 본인 계정(${ACCOUNT_ID}) 으로 치환됨 — skip"
 else
-  echo "WARN: $KUSTOMIZATION 없음 — 교체 스킵" >&2
+  echo "치환된 파일: ${CHANGED_FILES[*]}"
+  # git user 미설정 시 fallback (setup-all 이 만드는 커밋 전용 로컬값)
+  git -C "$ROOT" config user.email >/dev/null 2>&1 \
+    || git -C "$ROOT" config user.email "setup-all@local"
+  git -C "$ROOT" config user.name  >/dev/null 2>&1 \
+    || git -C "$ROOT" config user.name  "setup-all"
+
+  git -C "$ROOT" add "${CHANGED_FILES[@]}"
+  git -C "$ROOT" commit -m "chore: account placeholder → ${ACCOUNT_ID}" >/dev/null
+  if git -C "$ROOT" push origin FINAL; then
+    echo "placeholder 치환 + push 완료 → ArgoCD 가 step 11 에서 sync"
+  else
+    echo "WARN: git push 실패 — 수동으로 'git push origin FINAL' 실행 후 ArgoCD sync 필요" >&2
+  fi
 fi
 
 # ── 10. ArgoCD 설치 + ticketing Application 등록 ──

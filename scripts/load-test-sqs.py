@@ -9,6 +9,7 @@ monitoring EC2에서 실행 (boto3가 설치되어 있고 SQS와 같은 region/V
 """
 import boto3
 import json
+import os
 import sys
 import time
 import concurrent.futures
@@ -16,7 +17,12 @@ import concurrent.futures
 COUNT = int(sys.argv[1]) if len(sys.argv) > 1 else 1000
 PATTERN = sys.argv[2] if len(sys.argv) > 2 else "spike"
 
-SQS_URL = "https://sqs.ap-northeast-2.amazonaws.com/734772058616/ticketing-reservation.fifo"
+SQS_URL = os.environ.get("SQS_QUEUE_URL")
+if not SQS_URL:
+    print("ERROR: SQS_QUEUE_URL env 변수가 필요합니다.", file=sys.stderr)
+    print("  예: export SQS_QUEUE_URL=$(terraform -chdir=terraform output -raw sqs_queue_url)",
+          file=sys.stderr)
+    sys.exit(1)
 EVENT_ID = "a1b2c3d4-0001-0001-0001-000000000001"
 TS = int(time.time() * 1_000_000_000)
 

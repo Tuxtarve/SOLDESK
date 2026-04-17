@@ -28,15 +28,21 @@ for cmd in kubectl aws; do
   fi
 done
 
-# SQS URL / region — terraform output 우선, 실패 시 하드코딩 fallback
+# SQS URL / region — terraform output 으로만 얻는다 (계정 ID 하드코딩 금지).
+# 수동 override 가 필요하면 SQS_QUEUE_URL env 변수로 주입:
+#   export SQS_QUEUE_URL=$(terraform -chdir=terraform output -raw sqs_queue_url)
 SQS_URL=""
 REGION=""
 if [[ -d "$TF_DIR" ]]; then
   SQS_URL=$(terraform -chdir="$TF_DIR" output -raw sqs_queue_url 2>/dev/null || true)
   REGION=$(terraform -chdir="$TF_DIR" output -raw aws_region 2>/dev/null || true)
 fi
-SQS_URL="${SQS_URL:-https://sqs.ap-northeast-2.amazonaws.com/734772058616/ticketing-reservation.fifo}"
+SQS_URL="${SQS_QUEUE_URL:-$SQS_URL}"
 REGION="${REGION:-ap-northeast-2}"
+if [[ -z "$SQS_URL" ]]; then
+  echo "ERROR: SQS queue URL 을 알 수 없음 — terraform output 또는 SQS_QUEUE_URL env 필요" >&2
+  exit 1
+fi
 
 # ANSI color (Git Bash mintty / Linux / macOS 호환)
 BOLD=$'\033[1m'
