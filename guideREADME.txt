@@ -301,18 +301,50 @@ AWS_ROLE_ARN 시크릿 값을 "placeholder" → 위 ARN 으로 업데이트.
  8. 다 쓰고 나서 — 전체 삭제 (과금 멈춤)
 ==========================================================
 
-더 이상 안 쓰거나 리셋하고 싶으면:
+★ 중요: destroy 직전에 PVC 먼저 삭제 (고아 EBS 방지)
+──────────────────────────────────────────────────────────
+scripts/destroy.sh 는 VPC · ENI · ALB · SG 는 정리하지만,
+Prometheus / Grafana 가 동적으로 만든 EBS 볼륨은 자동 정리하지 않습니다.
+(EKS 가 먼저 사라지면 EBS CSI Controller 도 같이 죽어서 EBS 삭제 API 가
+호출되지 않음 → EBS 가 "available" 상태로 남아 계속 과금됩니다)
+
+따라서 destroy 전에 아래 명령으로 PVC 를 먼저 지워야 EBS 가 깨끗이
+사라집니다. CSI 가 살아있을 때 삭제해야 reclaimPolicy: Delete 가 동작함.
+
+    kubectl delete pvc --all -n monitoring --wait=false
+    kubectl delete pvc --all -n ticketing  --wait=false
+    sleep 30         # CSI 가 EBS 삭제 API 다 호출할 시간 확보
+
+그 다음 destroy:
 
     bash scripts/destroy.sh
 
   이 스크립트는:
-    - k8s 리소스 정리 (ingress/ALB 먼저 삭제 → orphan ENI 방지)
-    - ArgoCD 제거
-    - Terraform destroy (VPC/EKS/RDS/...)
-    - S3 버킷 비우기
+    - VPC 내 EIP / ALB / NLB / TG / ENI / SG 사전 정리
+    - Terraform destroy (VPC/EKS/RDS/ElastiCache/SQS/S3/Cognito/...)
+    - 실패 시 최대 4회 재시도
 
-  주의: destroy 후에도 CloudWatch Logs, ECR 이미지 등은 남아있을 수 있으니
-        AWS 콘솔 Billing 대시보드에서 며칠 후 0원인지 꼭 확인하세요.
+★ destroy 후 고아 EBS 확인 (권장)
+──────────────────────────────────────────────────────────
+위 PVC 사전 삭제를 건너뛰었거나 중간에 실패했으면, AWS 계정에
+"available" 상태 EBS 볼륨이 고아로 남아서 계속 과금됩니다.
+
+조회:
+    aws ec2 describe-volumes --region ap-northeast-2 \
+      --filters "Name=status,Values=available" \
+      --query 'Volumes[*].[VolumeId,Size,CreateTime,Tags[?Key==`kubernetes.io/created-for/pvc/name`].Value|[0]]' \
+      --output table
+
+출력 예시:
+    vol-0abc...   20   2026-04-17T...   prometheus-kube-prometheus-stack-...
+    vol-0def...   10   2026-04-17T...   grafana-...
+
+삭제:
+    aws ec2 delete-volume --volume-id vol-0abc... --region ap-northeast-2
+
+주의: destroy 후에도 CloudWatch Logs, ECR 이미지, 고아 EBS 등이 남아서
+      과금될 수 있으니 AWS 콘솔 Billing 대시보드에서 며칠 후 0원인지
+      꼭 확인하세요.
 
 
 ==========================================================
