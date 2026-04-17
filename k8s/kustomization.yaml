@@ -17,6 +17,7 @@ resources:
   - worker-svc/service.yaml
   - worker-svc-ui/deployment.yaml
   - worker-svc-ui/service.yaml
+  - keda
   - ingress.yaml
 
 images:
