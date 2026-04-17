@@ -471,6 +471,30 @@ def try_hold_seats(
     return {"ok": True, "code": "HELD", "ttl_sec": ttl}
 
 
+def release_seats_on_refund(*, show_id: int, seats: List[Tuple[int, int]]) -> None:
+    """환불 시 confirmed 상태의 seat hold 키들을 강제로 삭제.
+
+    release_seats() 는 booking_ref 가 일치해야만 삭제하지만 (실패/타임아웃 hold 해제용),
+    환불은 이미 예매 확정(CONFIRMED) 된 좌석을 되돌리는 것이므로 booking_ref 대조 없이
+    해당 show_id + (row,col) 키를 무조건 비워야 다음 사용자가 재예매 가능.
+
+    DB 의 concert_booking_seats.status 는 CANCEL 로 업데이트되었다는 전제.
+    Redis 잔여 CONFIRMED 키 때문에 409 DUPLICATE_SEAT 로 막히는 증상을 방지.
+    """
+    if not seats or not CACHE_ENABLED:
+        return
+    try:
+        pipe = redis_client.pipeline()
+        set_key = _hold_set_key(show_id)
+        for r, c in seats:
+            pipe.delete(_seat_key(show_id, int(r), int(c)))
+            pipe.srem(set_key, f"{int(r)}-{int(c)}")
+        pipe.execute()
+        bump_hold_revision(show_id)
+    except Exception:
+        log.exception("release_seats_on_refund failed show_id=%s", show_id)
+
+
 def release_seats(*, show_id: int, seats: List[Tuple[int, int]], booking_ref: str) -> None:
     if not seats:
         return

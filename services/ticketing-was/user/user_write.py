@@ -152,6 +152,17 @@ def _refund_concert_booking(user_id: int, booking_id: int):
                 (booking_id,),
             )
 
+            # CANCEL 로 바꾸기 전에 현재 ACTIVE 좌석 목록을 수집 → Redis seat 키 정리에 사용
+            cur.execute(
+                "SELECT seat_row_no, seat_col_no FROM concert_booking_seats "
+                "WHERE booking_id = %s AND UPPER(COALESCE(status,'')) = 'ACTIVE'",
+                (booking_id,),
+            )
+            seats_to_release = [
+                (int(r.get("seat_row_no") or 0), int(r.get("seat_col_no") or 0))
+                for r in cur.fetchall() or []
+            ]
+
             cur.execute(
                 "UPDATE concert_booking_seats SET status = 'CANCEL' WHERE booking_id = %s AND status = 'ACTIVE'",
                 (booking_id,),
@@ -192,6 +203,14 @@ def _refund_concert_booking(user_id: int, booking_id: int):
         )
     finally:
         conn.close()
+
+    # Redis 의 CONFIRMED seat 키 강제 삭제 — 안 하면 재예매 시 409 DUPLICATE_SEAT
+    try:
+        if show_id_for_cache > 0 and seats_to_release:
+            from concert.seat_hold import release_seats_on_refund
+            release_seats_on_refund(show_id=show_id_for_cache, seats=seats_to_release)
+    except Exception:
+        pass
 
     try:
         from concert.concert_read_cache import invalidate_concert_caches_after_booking
