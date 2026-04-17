@@ -34,25 +34,35 @@
 ==========================================================
 
 ──────────────────────────────────────────────────────────
-[수정 1] terraform/terraform.tfvars
+[수정 1] terraform/terraform.tfvars  (파일을 새로 만들어야 함)
 ──────────────────────────────────────────────────────────
-현재 내용:
-    slack_webhook_url = "https://hooks.slack.com/services/T0ASF3ZN.../..."
-    alb_listener_arn = ""
-    frontend_callback_domain = ""
+terraform.tfvars 는 .gitignore 로 제외되어 있어 fork 받은 상태에는
+이 파일이 없습니다. example 을 복사해서 새로 만드세요:
 
-이렇게 바꿔주세요:
-    # 본인 슬랙 웹훅 (없으면 빈 문자열 "" 로)
-    slack_webhook_url = ""
+    cd terraform
+    cp terraform.tfvars.example terraform.tfvars
 
-    # Cognito 호스티드 UI 도메인 prefix (★ 전역 유일, 절대 "ticketing-auth-734772" 그대로 두지 말 것)
-    # 본인만의 유니크 문자열로 작성. 숫자 포함 권장.
+그 다음 terraform.tfvars 를 열어 ★ 필수 2개 값을 본인 값으로 교체:
+
+    # 필수 1 — Cognito 호스티드 UI 도메인 prefix (★ 전역 유일)
+    # 다른 AWS 계정이 먼저 같은 값으로 apply 해두면
+    # "Domain already associated" 에러로 apply 가 실패합니다.
+    # 본인만의 유니크 문자열로 작성 (숫자 포함 권장).
     # 예: "myticket-auth-jd4k29"
     cognito_domain_prefix = "myticket-auth-<본인유니크문자열>"
 
+    # 필수 2 — 본인 GitHub 리포지토리 (owner/repo 형식)
+    # CI/CD OIDC IAM role trust 조건에 사용됩니다.
+    # default 값("your-org/ticketing") 그대로 두면 GitHub Actions 에서
+    # AWS role assume 이 실패합니다.
+    github_repo = "<본인GitHub아이디>/soldesk"
+
     # 아래 2줄은 그대로 비워두세요. setup-all.sh 가 자동으로 채워줍니다.
-    alb_listener_arn = ""
+    alb_listener_arn         = ""
     frontend_callback_domain = ""
+
+    # DB 비밀번호는 tfvars 에 쓰지 말고 3단계 환경변수로 주입합니다
+    # (export TF_VAR_db_password='...')
 
 ──────────────────────────────────────────────────────────
 [수정 2] argocd/application.yaml  (11번째 줄)
@@ -67,9 +77,11 @@
 ※ 바로 아래 줄 `targetRevision: FINAL` 은 그대로 두세요 (브랜치명 동일).
 
 ※ 수정 후 반드시 본인 repo 로 push 해야 ArgoCD 가 바뀐 값을 봅니다:
-    git add argocd/application.yaml terraform/terraform.tfvars
+    git add argocd/application.yaml
     git commit -m "chore: 본인 환경값으로 교체"
     git push origin FINAL
+
+  (terraform.tfvars 는 .gitignore 로 제외되어 git add 해도 무시됨 — 정상)
 
 ──────────────────────────────────────────────────────────
 [수정 3] GitHub Secrets 등록 (웹 브라우저에서)
