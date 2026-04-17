@@ -29,10 +29,15 @@ PUBLIC_PATH_PREFIXES = (
     "/api/read/health",
     "/api/write/health",
     "/metrics",
-    # 공개 조회 API (영화/극장/콘서트 목록 등)
+    # 공개 조회 API (영화/극장/콘서트 목록 + 상세)
+    # 목록(복수)과 상세(단수) 둘 다 비로그인 조회 허용 — 로그인 강제는
+    # 예매 시점(write-api)에서만 발생.
     "/api/read/movies",
+    "/api/read/movie/",
     "/api/read/theaters",
+    "/api/read/theater/",
     "/api/read/concerts",
+    "/api/read/concert/",
     # 캐시 리빌드 (admin)
     "/api/write/admin/",
     "/api/read/movies/cache/",
