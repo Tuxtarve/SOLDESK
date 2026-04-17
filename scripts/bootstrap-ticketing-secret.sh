@@ -25,7 +25,6 @@ DB_W="$(terraform output -raw rds_writer_endpoint)"
 DB_R="$(terraform output -raw rds_reader_endpoint)"
 REDIS_H="$(terraform output -raw redis_endpoint)"
 SQS_URL="$(terraform output -raw sqs_queue_url)"
-SQS_UI_URL="$(terraform output -raw sqs_ui_queue_url)"
 COGNITO_POOL="$(terraform output -raw cognito_user_pool_id)"
 COGNITO_CID="$(terraform output -raw cognito_client_id)"
 
@@ -44,7 +43,6 @@ kubectl create secret generic ticketing-secrets \
   --from-literal=DB_NAME=ticketing \
   --from-literal=REDIS_HOST="$REDIS_H" \
   --from-literal=SQS_QUEUE_URL="$SQS_URL" \
-  --from-literal=SQS_QUEUE_INTERACTIVE_URL="$SQS_UI_URL" \
   --from-literal=COGNITO_USER_POOL_ID="$COGNITO_POOL" \
   --from-literal=COGNITO_CLIENT_ID="$COGNITO_CID" \
   -n ticketing \

@@ -72,7 +72,6 @@ data:
 #   --from-literal=ELASTICACHE_PRIMARY_ENDPOINT=<elasticache-endpoint> \
 #   --from-literal=REDIS_HOST=<elasticache-endpoint> \
 #   --from-literal=SQS_QUEUE_URL=<sqs-fifo-url> \
-#   --from-literal=SQS_QUEUE_INTERACTIVE_URL=<sqs-ui-fifo-url> \
 #   --from-literal=COGNITO_USER_POOL_ID=<pool-id> \
 #   --from-literal=COGNITO_CLIENT_ID=<client-id> \
 #   -n ticketing

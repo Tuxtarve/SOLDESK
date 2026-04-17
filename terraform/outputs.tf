@@ -29,10 +29,6 @@ output "sqs_queue_url" {
   value = module.sqs.reservation_queue_url
 }
 
-output "sqs_ui_queue_url" {
-  value = module.sqs.reservation_ui_queue_url
-}
-
 output "eks_cluster_name" {
   description = "Pass to kubectl: aws eks update-kubeconfig --region <region> --name $(terraform output -raw eks_cluster_name)"
   value       = module.eks.cluster_name

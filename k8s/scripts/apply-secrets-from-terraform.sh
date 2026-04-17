@@ -55,16 +55,6 @@ else
   SQS_URL="$(terraform -chdir="$TF_DIR" output -raw sqs_queue_url)"
 fi
 
-if [ -n "${POST_APPLY_SQS_INTERACTIVE_QUEUE_URL:-}" ]; then
-  SQS_INTERACTIVE_URL="$POST_APPLY_SQS_INTERACTIVE_QUEUE_URL"
-else
-  SQS_INTERACTIVE_URL="$(terraform -chdir="$TF_DIR" output -raw sqs_interactive_queue_url 2>/dev/null)" || SQS_INTERACTIVE_URL=""
-fi
-if [ -z "$SQS_INTERACTIVE_URL" ]; then
-  echo "WARN: sqs_interactive_queue_url 없음 — SQS_QUEUE_INTERACTIVE_URL 을 bulk 와 동일하게 둡니다(단일 큐 모드)." >&2
-  SQS_INTERACTIVE_URL="$SQS_URL"
-fi
-
 # DB_READER_HOST: 단일 RDS 시 writer 와 동일. Replica 생기면 rds_reader_endpoint 로 분리.
 # Read replica 를 실제로 쓰려면 ConfigMap 등에서 DB_READ_REPLICA_ENABLED=true 로 켠 뒤에만 리더 접속.
 kubectl create secret generic "$SECRET_NAME" -n "$NAMESPACE" \
@@ -75,9 +65,7 @@ kubectl create secret generic "$SECRET_NAME" -n "$NAMESPACE" \
   --from-literal=ELASTICACHE_PRIMARY_ENDPOINT="$REDIS_EP" \
   --from-literal=REDIS_HOST="$REDIS_EP" \
   --from-literal=SQS_QUEUE_URL="$SQS_URL" \
-  --from-literal=SQS_QUEUE_INTERACTIVE_URL="$SQS_INTERACTIVE_URL" \
   --dry-run=client -o yaml \
   | kubectl apply -f -
 
 echo "Applied secret: $NAMESPACE/$SECRET_NAME"
-

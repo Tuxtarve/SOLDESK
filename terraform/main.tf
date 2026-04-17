@@ -193,8 +193,6 @@ module "eks" {
   sqs_queue_arns    = [
     module.sqs.reservation_queue_arn,
     module.sqs.reservation_dlq_arn,
-    module.sqs.reservation_ui_queue_arn,
-    module.sqs.reservation_ui_dlq_arn,
   ]
 
   # destroy 순서: module.eks → post_eks_vpc_cleanup → module.network
@@ -263,8 +261,6 @@ resource "aws_iam_role_policy" "eks_node_sqs" {
       Resource = [
         module.sqs.reservation_queue_arn,
         module.sqs.reservation_dlq_arn,
-        module.sqs.reservation_ui_queue_arn,
-        module.sqs.reservation_ui_dlq_arn,
       ]
     }]
   })

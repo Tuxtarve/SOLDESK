@@ -27,7 +27,6 @@ spec:
                       operator: In
                       values:
                         - worker-svc
-                        - worker-svc-ui
                 topologyKey: kubernetes.io/hostname
       topologySpreadConstraints:
         - maxSkew: 1

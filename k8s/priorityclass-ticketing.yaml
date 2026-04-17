@@ -17,14 +17,6 @@ description: "read-api"
 apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata:
-  name: ticketing-priority-worker-ui
-value: 100000
-globalDefault: false
-description: "GUI queue (worker-svc-ui) -- higher than bulk worker"
----
-apiVersion: scheduling.k8s.io/v1
-kind: PriorityClass
-metadata:
   name: ticketing-priority-worker-bulk
 value: 10000
 globalDefault: false

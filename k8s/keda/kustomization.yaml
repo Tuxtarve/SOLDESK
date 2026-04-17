@@ -6,4 +6,3 @@ namespace: ticketing
 resources:
   - triggerauthentication-worker-sqs.yaml
   - scaledobject-worker-svc-sqs.yaml
-  - scaledobject-worker-svc-ui-sqs.yaml
