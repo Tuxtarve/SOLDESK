@@ -35,7 +35,9 @@ resource "aws_wafv2_web_acl" "main" {
     }
   }
 
-  # IP Rate Limiting: 1분에 100요청 초과 차단
+  # IP Rate Limiting: 5분에 2000요청 초과 차단
+  # (SPA 초기 로드 1 페이지 = 리소스 수십 개 + API 호출 여러 건이 묶여 발사되므로
+  #  100/분 은 일반 시연 중 정상 유저도 쉽게 돌파. WAF rate 는 최소 윈도우가 5분)
   rule {
     name     = "RateLimitRule"
     priority = 2
@@ -44,7 +46,7 @@ resource "aws_wafv2_web_acl" "main" {
     }
     statement {
       rate_based_statement {
-        limit              = 100
+        limit              = 2000
         aggregate_key_type = "IP"
       }
     }
