@@ -138,6 +138,10 @@ resource "aws_apigatewayv2_route" "api_public" {
     "GET /api/read/health",
     "GET /api/read/waiting-room/{proxy+}",
     "GET /api/read/booking/{proxy+}",
+    # 공개: 콘서트 대기열 (write-api 호스팅이지만 로그인 전 진입 허용 설계)
+    # enter: 대기표 발급 / status: 대기 순번 조회 — 둘 다 로그인 전 필요
+    "POST /api/write/concerts/{show_id}/waiting-room/enter",
+    "GET /api/write/concerts/waiting-room/status/{queue_ref}",
     # CORS preflight
     "OPTIONS /api/{proxy+}",
   ]) : toset([])
