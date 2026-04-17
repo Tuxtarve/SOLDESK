@@ -15,7 +15,7 @@
   - 프론트: S3 정적 호스팅 + CloudFront
   - 인증: Cognito User Pool + Hosted UI
   - GitOps: ArgoCD (자기 git repo 감시)
-  - 모니터링: Prometheus + Grafana (EKS 내)
+  - 모니터링: Prometheus + Grafana + Loki + Promtail (EKS 내)
   - 애플리케이션: 영화·공연·극장 티켓팅 풀스택
 
 ==========================================================
@@ -124,7 +124,7 @@ Git Bash 또는 터미널을 열어서 프로젝트 폴더로 이동:
     [3]  AWS Load Balancer Controller 설치
     [4]  Cluster Autoscaler 설치
     [5]  KEDA 설치
-    [6]  Prometheus + Grafana 설치
+    [6]  Prometheus + Grafana + Loki + Promtail 설치 (메트릭 + 로그)
     [7]  Kubernetes Secret 생성
     [8]  RDS 에 DB 스키마 + 시드데이터 주입
     [9]  Docker 이미지 빌드 → ECR push
@@ -174,10 +174,13 @@ AWS_ROLE_ARN 시크릿 값을 "placeholder" → 위 ARN 으로 업데이트.
     kubectl -n argocd get secret argocd-initial-admin-secret \
       -o jsonpath="{.data.password}" | base64 -d
 
-[C] Grafana (모니터링)
+[C] Grafana (모니터링 — 메트릭 + 로그 둘 다)
   kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
   브라우저: http://localhost:3000
   로그인: admin / prom-operator
+  → 좌측 메뉴 Explore 탭에서:
+      데이터소스 "Prometheus" → 메트릭 쿼리 (PromQL)
+      데이터소스 "Loki"       → 로그 검색 (LogQL, 예: {namespace="ticketing"})
 
 [D] 파드 상태 확인
   kubectl get pods -n ticketing
