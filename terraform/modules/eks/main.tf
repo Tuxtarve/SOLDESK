@@ -274,6 +274,17 @@ resource "aws_eks_addon" "ebs_csi" {
   depends_on = [aws_eks_node_group.app]
 }
 
+# metrics-server — HPA 가 읽는 metrics.k8s.io API 를 제공.
+# 없으면 kubectl top / HPA 의 CPU·memory utilization 이 <unknown> 으로 뜬다.
+# IRSA 불필요 (AWS API 호출 없음). addon_version 미지정 → EKS 버전 기본값 사용.
+resource "aws_eks_addon" "metrics_server" {
+  cluster_name                = aws_eks_cluster.main.name
+  addon_name                  = "metrics-server"
+  resolve_conflicts_on_create = "OVERWRITE"
+
+  depends_on = [aws_eks_node_group.app]
+}
+
 # ALB Controller IAM (Ingress 자동 생성용)
 resource "aws_iam_policy" "alb_controller" {
   name   = "ticketing-alb-controller-policy"

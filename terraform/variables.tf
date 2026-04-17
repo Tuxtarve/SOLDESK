@@ -51,7 +51,10 @@ variable "frontend_callback_domain" {
 }
 
 variable "cognito_domain_prefix" {
-  description = "Cognito 호스티드 UI 도메인 접두사 (전역 유일)"
+  # 전역(모든 AWS 계정 공유) 네임스페이스라 default 를 주면 다른 계정이
+  # 같은 값으로 먼저 apply 시 "Domain already associated with another user pool"
+  # 에러로 apply 가 깨진다. 사용자가 tfvars 에 반드시 유니크한 값을 지정하도록
+  # default 제거 — 미지정 시 terraform apply 가 즉시 prompt/fail 하여 인지.
+  description = "Cognito 호스티드 UI 도메인 접두사 (전역 유일). 예: ticketing-auth-<본인유니크값>"
   type        = string
-  default     = "ticketing-auth-734772"
 }
