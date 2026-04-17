@@ -47,9 +47,18 @@ with open(sys.argv[1], 'w') as f:
     json.dump(cfg, f)
 " "$CF_TMP"
 
+        # Windows Git Bash 에서 mktemp 는 MSYS 경로(/c/Users/...)를 반환하는데
+        # aws CLI 의 file:// 로더는 이를 인식하지 못해 "No such file" 로 실패.
+        # cygpath -m 으로 Windows native 경로(C:/Users/...)로 변환. Linux/macOS
+        # 에는 cygpath 가 없으므로 그대로 $CF_TMP 사용.
+        CF_TMP_PATH="$CF_TMP"
+        if command -v cygpath >/dev/null 2>&1; then
+          CF_TMP_PATH=$(cygpath -m "$CF_TMP")
+        fi
+
         aws cloudfront update-distribution \
           --id "$DIST_ID" \
-          --distribution-config "file://$CF_TMP" \
+          --distribution-config "file://$CF_TMP_PATH" \
           --if-match "$ETAG" > /dev/null || true
 
         echo "Distribution 비활성화 요청 완료. 전파 대기 중..."
