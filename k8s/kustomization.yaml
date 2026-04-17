@@ -9,8 +9,10 @@ resources:
   - pdb-user-facing.yaml
   - read-api/deployment.yaml
   - read-api/service.yaml
+  - read-api/hpa.yaml
   - write-api/deployment.yaml
   - write-api/service.yaml
+  - write-api/hpa.yaml
   - worker-svc/deployment.yaml
   - worker-svc/service.yaml
   - worker-svc-ui/deployment.yaml
