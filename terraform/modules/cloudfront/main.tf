@@ -128,19 +128,21 @@ with open(sys.argv[1], 'w') as f:
     }
   }
 
-  # SPA 라우팅 (404 → index.html)
+  # SPA 라우팅 (404 → index.html). 사용자가 /concert 같은 URL 직접 치면
+  # S3 에 해당 object 가 없어 404 → SPA 엔트리로 fallback.
   custom_error_response {
     error_code         = 404
     response_code      = 200
     response_page_path = "/index.html"
   }
 
-  # SPA 라우팅 (403 → index.html) — S3 OAC에서 존재하지 않는 경로는 403 반환
-  custom_error_response {
-    error_code         = 403
-    response_code      = 200
-    response_page_path = "/index.html"
-  }
+  # 403 은 rewrite 하지 않음. WAF 차단(예: 의심 UA) 시 403 이 발생하는데
+  # 이걸 /index.html 로 200 rewrite 하면:
+  #   1) /js/*.js 요청이 WAF 에 막히면 응답이 HTML(index.html) → 브라우저에서
+  #      "Unexpected token '<'" SyntaxError 로 페이지 전체가 깨짐
+  #   2) CF 엣지가 그 잘못된 응답을 캐싱하면 정상 UA 도 캐시된 HTML 을 받음
+  # 따라서 403 은 그대로 403 을 돌려보내 원인을 명확히 드러내는 편이 안전.
+  # (S3 object 부재로 인한 fallback 은 404 rewrite 로 충분)
 
   restrictions {
     geo_restriction { restriction_type = "none" }
