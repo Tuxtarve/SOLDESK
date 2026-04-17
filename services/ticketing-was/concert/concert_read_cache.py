@@ -629,11 +629,16 @@ def invalidate_concert_caches_after_booking(concert_id: int, show_id: Optional[i
     예매/환불 후: **해당 회차 스냅샷**만 삭제(대량 티켓팅 시 전역 목록/상세 키를 지우지 않음).
     레거시 공연 단위 부트스트랩 키가 남아 있으면 함께 제거.
     공연 메타(제목 등)를 바꾼 뒤 즉시 반영하려면 관리용 전체 리빌드 또는 별도 무효화가 필요하다.
+
+    환불 케이스: remain 카운터(_remain_count_key)도 삭제해서 다음 read 때
+    DB 의 복원된 remain_count 값으로 re-seed 되도록 한다. 삭제 안 하면
+    예매 DECR 로 줄어든 값이 환불 후에도 영구 유지되어 프론트에 오 숫자 노출.
     """
     keys: List[str] = [_concert_bootstrap_key(concert_id)]
     sid = int(show_id or 0)
     if sid > 0:
         keys.append(_concert_show_snapshot_key(sid))
+        keys.append(_remain_count_key(sid))
     try:
         redis_client.delete(*keys)
     except Exception:
