@@ -9,7 +9,7 @@ import uuid
 import secrets
 import string
 import pymysql
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from config import BOOKING_QUEUE_COUNTER_TTL_SEC, DB_HOST, DB_NAME, DB_PASSWORD, DB_PORT, DB_USER
@@ -458,9 +458,12 @@ def _seat_shard_id(row: int, col: int) -> int:
 
 
 @router.post("/api/write/concerts/booking/commit")
-def commit_concert_booking(payload: dict):
+def commit_concert_booking(payload: dict, request: Request):
     data = payload if isinstance(payload, dict) else {}
-    user_id = _to_int(data.get("user_id"))
+    # Cognito 미들웨어가 x-cognito-sub 로부터 DB int user_id 를 resolve 하여
+    # request.state.user_id 에 부착. 프론트가 payload.user_id 에 Cognito sub(UUID)
+    # 문자열을 보내는 케이스에서 _to_int 가 0 으로 떨어져 400/500 이 나던 버그 방지.
+    user_id = _to_int(getattr(request.state, "user_id", None) or data.get("user_id"))
     show_id = _to_int(data.get("show_id"))
     seats = data.get("seats") or []
     skip_hold = bool(data.get("skip_hold") is True)

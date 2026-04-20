@@ -213,6 +213,16 @@
             };
             runtime.setLoginUser(userData);
             runtime.setStoredUserId(userInfo.sub);
+
+            // Cognito sub(UUID) → DB int user_id 치환. login.js 와 동일 이유.
+            try {
+              const me = await runtime.getJson('/api/read/auth/me');
+              if (me && me.user && me.user.user_id) {
+                runtime.patchLoginUser({ user_id: me.user.user_id });
+              }
+            } catch (meErr) {
+              console.warn('[signup] resolve DB user_id failed:', meErr);
+            }
           }
         } catch (loginErr) {
           console.warn('[signup] auto-login after signup failed:', loginErr);
