@@ -159,8 +159,8 @@ resource "aws_apigatewayv2_stage" "default" {
   auto_deploy = true
 
   default_route_settings {
-    throttling_burst_limit = 1000
-    throttling_rate_limit  = 500
+    throttling_burst_limit = 10000
+    throttling_rate_limit  = 5000
   }
 
   tags = { Name = "ticketing-http-api-default-stage", Environment = var.env }
