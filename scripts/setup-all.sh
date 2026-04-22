@@ -313,20 +313,12 @@ done
 if [[ ${#CHANGED_FILES[@]} -eq 0 ]]; then
   echo "placeholder 이미 본인 계정(${ACCOUNT_ID}) 으로 치환됨 — skip"
 else
-  echo "치환된 파일: ${CHANGED_FILES[*]}"
-  # git user 미설정 시 fallback (setup-all 이 만드는 커밋 전용 로컬값)
-  git -C "$ROOT" config user.email >/dev/null 2>&1 \
-    || git -C "$ROOT" config user.email "setup-all@local"
-  git -C "$ROOT" config user.name  >/dev/null 2>&1 \
-    || git -C "$ROOT" config user.name  "setup-all"
-
-  git -C "$ROOT" add "${CHANGED_FILES[@]}"
-  git -C "$ROOT" commit -m "chore: account placeholder → ${ACCOUNT_ID}" >/dev/null
-  if git -C "$ROOT" push origin FINAL; then
-    echo "placeholder 치환 + push 완료 → ArgoCD 가 step 11 에서 sync"
-  else
-    echo "WARN: git push 실패 — 수동으로 'git push origin FINAL' 실행 후 ArgoCD sync 필요" >&2
-  fi
+  echo "치환된 파일(로컬 working tree 만): ${CHANGED_FILES[*]}"
+  # NOTE: 과거엔 여기서 git add/commit/push 를 자동 수행했으나 제거.
+  # - 팀원이 내 레포를 clone → setup-all.sh 실행 시 팀원 git push 권한 없어 스크립트가 fail 하던 문제 차단.
+  # - 본인 실행 시에도 "계정 ID 박힌 manifest" 가 원본 레포에 자동 올라가 팀원이 pull 받는 일 방지.
+  # 로컬 kubectl apply 는 이후 post_apply_k8s_bootstrap.sh / ArgoCD 경로가 수행하므로 배포는 지속됨.
+  # ArgoCD auto-sync 를 쓰는 경우에만, 본인이 직접 원하는 브랜치에 커밋·푸시 할 것.
 fi
 
 # ── 10. ArgoCD 설치 + ticketing Application 등록 ──
