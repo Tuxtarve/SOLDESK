@@ -468,9 +468,20 @@ echo "=========================================="
 echo " 전체 셋업 완료!"
 echo "=========================================="
 API_GW_ENDPOINT="$(terraform output -raw api_gateway_endpoint 2>/dev/null || echo '(아직 미생성)')"
+
+# Grafana / ArgoCD ALB 는 ALB Controller 가 k8s Ingress 로 만들어 terraform state 밖에 있음.
+# 여기서 kubectl 로 직접 조회해 한눈에 보이게 안내한다(ALB DNS 전파에 수 분 걸릴 수 있음).
+GRAFANA_ALB="$(kubectl -n monitoring get ingress grafana -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)"
+ARGOCD_ALB="$(kubectl -n argocd get ingress argocd-server -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)"
+GRAFANA_PW="$(kubectl -n monitoring get secret kube-prometheus-stack-grafana -o jsonpath='{.data.admin-password}' 2>/dev/null | base64 -d 2>/dev/null || true)"
+
 echo "  프론트엔드:    https://${CLOUDFRONT_DOMAIN}"
 echo "  API (사용자):  https://${CLOUDFRONT_DOMAIN}/api/events"
 echo "  API GW (직접): ${API_GW_ENDPOINT}/api/events"
 echo "  Internal ALB:  ${ALB_ADDRESS:-미확인} (VPC 내부에서만 접근 가능)"
+echo "  Grafana:       http://${GRAFANA_ALB:-(ALB DNS 대기 중 — 'kubectl -n monitoring get ingress grafana' 재확인)}"
+echo "                 (admin / ${GRAFANA_PW:-prom-operator})"
+echo "  ArgoCD UI:     http://${ARGOCD_ALB:-(ALB DNS 대기 중 — 'kubectl -n argocd get ingress argocd-server' 재확인)}"
+echo ""
 echo "  kubectl get nodes"
 echo "  kubectl get pods -n ticketing"
