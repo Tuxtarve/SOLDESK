@@ -25,9 +25,9 @@ resources:
 
 images:
   - name: ticketing/ticketing-was
-    # setup-all.sh [9.5/14] 가 PLACEHOLDER_ACCOUNT_ID 를 팀원 계정으로 치환.
-    newName: PLACEHOLDER_ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/ticketing-was
+    # setup-all.sh [9.5/14] 가 734772058616 를 팀원 계정으로 치환.
+    newName: 734772058616.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/ticketing-was
     newTag: latest
   - name: ticketing/worker-svc
-    newName: PLACEHOLDER_ACCOUNT_ID.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/worker-svc
+    newName: 734772058616.dkr.ecr.ap-northeast-2.amazonaws.com/ticketing/worker-svc
     newTag: latest
