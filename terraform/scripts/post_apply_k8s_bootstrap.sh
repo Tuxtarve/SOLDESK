@@ -90,11 +90,15 @@ if [ -z "${AWS_ACCOUNT_ID:-}" ] && command -v terraform >/dev/null 2>&1; then
 fi
 
 export DB_PASSWORD
+# apply-secrets 이 Secret 을 ns=ticketing 에 만들므로 네임스페이스 선생성 필수.
+# (kustomize 의 namespace.yaml 은 "kubectl apply -k" 에서 만들어지므로 더 뒤에 생성됨.)
+echo "=== ensure namespace $NS ==="
+kubectl get ns "$NS" >/dev/null 2>&1 || kubectl create ns "$NS" >/dev/null
+
 echo "=== apply-secrets-from-terraform ==="
 NAMESPACE="$NS" bash "$REPO_ROOT/k8s/scripts/apply-secrets-from-terraform.sh"
 
 echo "=== kubectl apply -k (rendered) ==="
-kubectl get ns "$NS" >/dev/null 2>&1 || kubectl create ns "$NS" >/dev/null
 
 # parent apply 가 주입한 env 우선 (Windows state lock 회피). 없으면 terraform output fallback.
 ACCOUNT_ID="${AWS_ACCOUNT_ID:-$(terraform -chdir="$TF_DIR" output -raw aws_account_id 2>/dev/null)}"
