@@ -41,6 +41,7 @@ resource "null_resource" "k8s_bootstrap_after_apply" {
       # 같은 apply 중 nested `terraform output`은 state 락·sensitive 출력 때문에 실패할 수 있음 → 모듈 값 직접 전달
       POST_APPLY_RDS_WRITER_ENDPOINT    = nonsensitive(module.rds.writer_endpoint)
       POST_APPLY_REDIS_PRIMARY_ENDPOINT = nonsensitive(module.elasticache.redis_endpoint)
+      POST_APPLY_SQS_QUEUE_URL          = module.sqs.reservation_queue_url
       EKS_CLUSTER_NAME                  = module.eks.cluster_name
       AWS_REGION                        = var.aws_region
       # Windows strict state lock 회피: install-cluster-autoscaler / post_apply 가
