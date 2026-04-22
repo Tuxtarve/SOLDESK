@@ -261,10 +261,18 @@ locals {
   oidc_issuer = replace(aws_eks_cluster.main.identity[0].oidc[0].issuer, "https://", "")
 }
 
+# EKS OIDC endpoint 의 실제 서버 cert 에서 SHA1 thumbprint 를 동적 조회.
+# AWS 가 주기적으로 EKS OIDC 서버 cert 를 갱신하는데 하드코딩 값은 stale 이 되어
+# IRSA 가 "No OpenIDConnect provider found in your account" 로 영구 파손된다.
+# 이 data source 는 apply 시점의 실제 cert fingerprint 를 사용해 drift 를 제거.
+data "tls_certificate" "eks_oidc" {
+  url = aws_eks_cluster.main.identity[0].oidc[0].issuer
+}
+
 resource "aws_iam_openid_connect_provider" "eks" {
   url             = aws_eks_cluster.main.identity[0].oidc[0].issuer
   client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = ["9e99a48a9960b14926bb7f3b02e22da2b0ab7280"]
+  thumbprint_list = [data.tls_certificate.eks_oidc.certificates[0].sha1_fingerprint]
 }
 
 resource "aws_iam_role" "alb_controller" {
