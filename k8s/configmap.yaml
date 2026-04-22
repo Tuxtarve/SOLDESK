@@ -67,6 +67,14 @@ data:
   WORKER_SQS_POLLERS: "2"
   # worker-svc: 파드당 DB 동시 실행 제한(커넥션/락 경합 제어). 데모에서는 20~50 권장.
   WORKER_DB_MAX_CONCURRENT: "20"
+  # worker-svc: seat_hold 가 표시한 concert:remain_dirty:show_ids:v1 set 을 주기적으로 소비해
+  # concert_shows.remain_count 를 DB 에 반영하는 백그라운드 루프.
+  # off 면 Redis remain 은 실시간이지만 DB remain 컬럼은 worker-svc 의 booking 처리 경로로만 갱신되어
+  # 환불/seat hold 변동 후 DB 값이 lagging. 운영에선 항상 true.
+  REMAIN_DB_SYNC_ENABLED: "true"
+  REMAIN_DB_SYNC_INTERVAL_SEC: "2"
+  REMAIN_DB_SYNC_BATCH_SIZE: "200"
+  REMAIN_DB_SYNC_LOCK_TTL_SEC: "3"
   SQS_WAIT_TIME_SECONDS: "20"
   SQS_POLL_ERROR_BACKOFF_SEC: "3"
   # SQS 수락 후 폴링용 Redis queued 키 TTL(초). 큐 적체 시각보다 길게 두는 것이 안전.
