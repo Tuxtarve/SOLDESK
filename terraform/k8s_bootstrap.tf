@@ -43,16 +43,21 @@ resource "null_resource" "k8s_bootstrap_after_apply" {
       POST_APPLY_REDIS_PRIMARY_ENDPOINT = nonsensitive(module.elasticache.redis_endpoint)
       EKS_CLUSTER_NAME                  = module.eks.cluster_name
       AWS_REGION                        = var.aws_region
-      TICKETING_NAMESPACE               = var.ticketing_namespace
-      TICKETING_CONFIGMAP_NAME          = var.ticketing_configmap_name
-      WORKER_DEPLOYMENT_NAME            = var.worker_deployment_name
-      READ_API_DEPLOYMENT_NAME          = var.read_api_deployment_name
-      WRITE_API_DEPLOYMENT_NAME         = var.write_api_deployment_name
-      K8S_INGRESS_NAME                  = var.k8s_ingress_name
-      IMAGE_TAG                         = var.image_tag
-      ECR_REPO_TICKETING_WAS            = var.ecr_repo_ticketing_was
-      ECR_REPO_WORKER_SVC               = var.ecr_repo_worker_svc
-      DB_SCHEMA_NAME                    = var.db_schema_name
+      # Windows strict state lock 회피: install-cluster-autoscaler / post_apply 가
+      # nested `terraform output` 으로 읽던 값을 부모 apply 에서 직접 주입.
+      AWS_ACCOUNT_ID              = data.aws_caller_identity.current.account_id
+      SQS_ACCESS_ROLE_ARN         = module.eks.sqs_access_role_arn
+      CLUSTER_AUTOSCALER_ROLE_ARN = module.eks.cluster_autoscaler_role_arn
+      TICKETING_NAMESPACE         = var.ticketing_namespace
+      TICKETING_CONFIGMAP_NAME    = var.ticketing_configmap_name
+      WORKER_DEPLOYMENT_NAME      = var.worker_deployment_name
+      READ_API_DEPLOYMENT_NAME    = var.read_api_deployment_name
+      WRITE_API_DEPLOYMENT_NAME   = var.write_api_deployment_name
+      K8S_INGRESS_NAME            = var.k8s_ingress_name
+      IMAGE_TAG                   = var.image_tag
+      ECR_REPO_TICKETING_WAS      = var.ecr_repo_ticketing_was
+      ECR_REPO_WORKER_SVC         = var.ecr_repo_worker_svc
+      DB_SCHEMA_NAME              = var.db_schema_name
       SYNC_S3_ENDPOINTS = (
         var.enable_s3_hosting_v2_module && !var.enable_cloudfront_for_frontend
       ) ? "1" : "0"

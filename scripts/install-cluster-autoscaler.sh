@@ -25,9 +25,12 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 TF_DIR="$ROOT/terraform"
 cd "$TF_DIR"
 
-CLUSTER_NAME="$(terraform output -raw eks_cluster_name)"
-ROLE_ARN="$(terraform output -raw cluster_autoscaler_role_arn)"
-REGION="$(terraform output -raw aws_region)"
+# 같은 apply 내부에서 호출 시 Windows strict state lock 과 충돌하므로, 부모 apply 가
+# 환경변수(EKS_CLUSTER_NAME / CLUSTER_AUTOSCALER_ROLE_ARN / AWS_REGION)로 주입했으면 그걸 우선 사용.
+# 스크립트를 터미널에서 직접 실행할 때는 기존대로 `terraform output` fallback.
+CLUSTER_NAME="${EKS_CLUSTER_NAME:-$(terraform output -raw eks_cluster_name)}"
+ROLE_ARN="${CLUSTER_AUTOSCALER_ROLE_ARN:-$(terraform output -raw cluster_autoscaler_role_arn)}"
+REGION="${AWS_REGION:-$(terraform output -raw aws_region)}"
 
 # helm --wait 가 클러스터 Pending(노드 없음/부족) 상황에서 무한 대기처럼 보이는 것을 방지한다.
 # 필요 시 환경변수로 늘릴 수 있음.

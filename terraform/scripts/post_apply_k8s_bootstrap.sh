@@ -82,7 +82,9 @@ fi
 echo "=== cluster-autoscaler (Helm, 노드 ASG — Pending 파드 시 스케일아웃) ==="
 bash "$REPO_ROOT/scripts/install-cluster-autoscaler.sh"
 
-if command -v terraform >/dev/null 2>&1; then
+# parent apply 가 state lock 중이면 nested `terraform output` 이 Windows 에서 실패.
+# 이 정보는 부가 로그용이라 스킵해도 무방. 직접 실행 시에는 원래대로 출력.
+if [ -z "${AWS_ACCOUNT_ID:-}" ] && command -v terraform >/dev/null 2>&1; then
   echo "=== eks_node_group_scaling_summary (max > desired 여야 CA scale-up 가능) ==="
   terraform -chdir="$TF_DIR" output eks_node_group_scaling_summary 2>/dev/null || true
 fi
@@ -94,9 +96,10 @@ NAMESPACE="$NS" bash "$REPO_ROOT/k8s/scripts/apply-secrets-from-terraform.sh"
 echo "=== kubectl apply -k (rendered) ==="
 kubectl get ns "$NS" >/dev/null 2>&1 || kubectl create ns "$NS" >/dev/null
 
-ACCOUNT_ID="$(terraform -chdir="$TF_DIR" output -raw aws_account_id 2>/dev/null)"
-REGION="$(terraform -chdir="$TF_DIR" output -raw aws_region 2>/dev/null)"
-SQS_ROLE_ARN="$(terraform -chdir="$TF_DIR" output -raw sqs_access_role_arn 2>/dev/null)"
+# parent apply 가 주입한 env 우선 (Windows state lock 회피). 없으면 terraform output fallback.
+ACCOUNT_ID="${AWS_ACCOUNT_ID:-$(terraform -chdir="$TF_DIR" output -raw aws_account_id 2>/dev/null)}"
+REGION="${AWS_REGION:-$(terraform -chdir="$TF_DIR" output -raw aws_region 2>/dev/null)}"
+SQS_ROLE_ARN="${SQS_ACCESS_ROLE_ARN:-$(terraform -chdir="$TF_DIR" output -raw sqs_access_role_arn 2>/dev/null)}"
 ECR_REGISTRY="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
 WAS_IMAGE="${ECR_REGISTRY}/${ECR_REPO_TICKETING_WAS}:${IMAGE_TAG}"
 WORKER_IMAGE="${ECR_REGISTRY}/${ECR_REPO_WORKER_SVC}:${IMAGE_TAG}"
