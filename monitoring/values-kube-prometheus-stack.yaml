@@ -196,6 +196,28 @@ nodeExporter:
 kubeStateMetrics:
   enabled: true
 
+# ── EKS managed control-plane 컴포넌트 비활성화 ─────────
+# EKS 는 etcd / kube-scheduler / kube-controller-manager 를 AWS 가 관리하는 영역에서
+# 돌리며 고객 VPC 에서 metrics endpoint 접근이 불가능하다(AWS 정책상 비공개).
+# 아래 3개를 기본값(true) 으로 두면 Prometheus Operator 가 ServiceMonitor/Service 는
+# 만드는데 실제 endpoint 가 없어 target 자체가 비고, Grafana 의
+# "Kubernetes / etcd / Scheduler / Controller Manager" 대시보드가 전부 No data 로 뜸.
+# defaultRules.rules.* 도 함께 꺼서 항상 fire 하는 가짜 etcdDown / kubeSchedulerDown
+# 알림이 울리지 않도록 한다.
+kubeEtcd:
+  enabled: false
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+
+defaultRules:
+  rules:
+    etcd: false
+    kubeSchedulerAlerting: false
+    kubeSchedulerRecording: false
+    kubeControllerManager: false
+
 # ── Prometheus Operator ────────────────────────────────
 prometheusOperator:
   resources:
