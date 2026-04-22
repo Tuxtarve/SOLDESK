@@ -25,7 +25,7 @@ logging.basicConfig(level="INFO", format="%(asctime)s %(levelname)s %(message)s"
 log = logging.getLogger("worker-svc")
 
 AWS_REGION    = os.getenv("AWS_REGION", "")
-SQS_QUEUE_URL = (os.getenv("SQS_QUEUE_URL") or "").strip()
+SQS_QUEUE_NAME = (os.getenv("SQS_QUEUE_NAME") or "ticketing-reservation.fifo").strip()
 DB_HOST       = os.getenv("DB_WRITER_HOST", "127.0.0.1")
 DB_PORT       = int(os.getenv("DB_PORT", "3306"))
 DB_NAME       = os.getenv("DB_NAME", "ticketing")
@@ -79,10 +79,16 @@ def _maybe_sleep_demo_delay() -> None:
         time.sleep(ms / 1000.0)
 
 
-# ticketing-was/config.py 와 동일 규칙: SQS URL 이 있으면 예매 상태 ElastiCache 필수 → 자동 True
+# ticketing-was/config.py 와 동일 규칙: SQS 큐 이름이 있으면 예매 상태 ElastiCache 필수 → 자동 True
 BOOKING_STATE_ENABLED = _get_bool("BOOKING_STATE_ENABLED", True)
-if SQS_QUEUE_URL:
+if SQS_QUEUE_NAME:
     BOOKING_STATE_ENABLED = True
+
+# Redis remain → DB remain 비동기 동기화(옵션)
+REMAIN_DB_SYNC_ENABLED = _get_bool("REMAIN_DB_SYNC_ENABLED", False)
+REMAIN_DB_SYNC_INTERVAL_SEC = _get_int("REMAIN_DB_SYNC_INTERVAL_SEC", 2, 0)
+REMAIN_DB_SYNC_BATCH_SIZE = _get_int("REMAIN_DB_SYNC_BATCH_SIZE", 200, 1)
+REMAIN_DB_SYNC_LOCK_TTL_SEC = _get_int("REMAIN_DB_SYNC_LOCK_TTL_SEC", 3, 1)
 
 # read-api 와 동일: 조회 캐시 무효화만 noop (연결 생략)
 CACHE_ENABLED = _get_bool("CACHE_ENABLED", True)
@@ -94,6 +100,8 @@ REDIS_HEALTH_CHECK_INTERVAL_SEC = _get_int("REDIS_HEALTH_CHECK_INTERVAL_SEC", 30
 
 # ticketing-was/theater/theaters_read.py 와 동일해야 함
 THEATERS_BOOTSTRAP_CACHE_KEY = "theaters:booking:bootstrap:v6"
+
+CONCERT_REMAIN_DIRTY_SET_KEY = "concert:remain_dirty:show_ids:v1"
 
 
 def _theaters_detail_cache_key(theater_id: int) -> str:
@@ -182,6 +190,20 @@ _sqs_config = Config(
     read_timeout=_sqs_read,
 )
 sqs = boto3.client("sqs", region_name=AWS_REGION, config=_sqs_config)
+
+
+def _resolve_queue_url() -> str:
+    qname = str(SQS_QUEUE_NAME or "").strip()
+    if not qname:
+        raise RuntimeError("SQS_QUEUE_NAME is required")
+    resp = sqs.get_queue_url(QueueName=qname)
+    url = str(resp.get("QueueUrl") or "").strip()
+    if not url:
+        raise RuntimeError("GetQueueUrl returned empty QueueUrl")
+    return url
+
+
+SQS_QUEUE_URL = _resolve_queue_url()
 
 # 파드당 DB 동시 실행 제한(과도한 커넥션/락 경합으로 전체 처리량이 떨어지는 것을 방지).
 # 값이 크면 DB 부하가 커지고, KEDA 데모에서는 처리량 증가가 더 선명해진다(단 RDS 한도 주의).
@@ -287,6 +309,116 @@ def _to_int(v, default=0):
     except (TypeError, ValueError):
         return default
 
+
+def _sync_one_concert_show_remain_from_redis(show_id: int) -> bool:
+    """
+    Redis remain 카운터(concert:show:{id}:remain:v1)를 DB concert_shows.remain_count로 best-effort 반영.
+    - DB 값이 이미 Redis와 같으면 UPDATE를 스킵(=조회만 하고 끝).
+    Returns: True if updated, False if skipped/failed.
+    """
+    sid = _to_int(show_id)
+    if sid <= 0:
+        return False
+    try:
+        raw = elasticache_read_cache_client.get(f"concert:show:{sid}:remain:v1")
+        if raw is None:
+            return False
+        redis_remain = max(0, _to_int(raw, 0))
+    except Exception:
+        return False
+
+    conn = get_tx_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT remain_count, total_count FROM concert_shows WHERE show_id=%s LIMIT 1",
+                (sid,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return False
+            db_remain = max(0, _to_int(row.get("remain_count"), 0))
+            total = max(0, _to_int(row.get("total_count"), 0))
+            # total_count 방어
+            if total > 0:
+                redis_remain = min(redis_remain, total)
+            if db_remain == redis_remain:
+                return False
+            status = "CLOSED" if redis_remain <= 0 else "OPEN"
+            cur.execute(
+                "UPDATE concert_shows SET remain_count=%s, status=%s WHERE show_id=%s",
+                (redis_remain, status, sid),
+            )
+        conn.commit()
+        return True
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return False
+    finally:
+        conn.close()
+
+
+def _remain_db_sync_loop() -> None:
+    if not REMAIN_DB_SYNC_ENABLED:
+        return
+    if not CACHE_ENABLED:
+        # Redis를 안 쓰는 모드면 동기화할 remain 자체가 없으니 스킵
+        return
+    interval = max(0, int(REMAIN_DB_SYNC_INTERVAL_SEC))
+    batch = max(1, int(REMAIN_DB_SYNC_BATCH_SIZE))
+    lock_ttl = max(1, int(REMAIN_DB_SYNC_LOCK_TTL_SEC))
+    lock_key = "concert:remain_db_sync:lock:v1"
+
+    while True:
+        try:
+            # 여러 파드가 있으면 중복 실행을 막기 위해 Redis lock(SET NX EX)을 사용
+            try:
+                if not elasticache_read_cache_client.set(lock_key, "1", nx=True, ex=lock_ttl):
+                    time.sleep(0.2 if interval <= 0 else min(1.0, interval))
+                    continue
+            except Exception:
+                # lock 실패면 보수적으로 sleep
+                time.sleep(0.5)
+                continue
+
+            show_ids: list[int] = []
+            try:
+                # spop은 set에서 원소를 제거하며 가져옴(중복 처리 방지)
+                for _ in range(batch):
+                    v = elasticache_read_cache_client.spop(CONCERT_REMAIN_DIRTY_SET_KEY)
+                    if v is None:
+                        break
+                    sid = _to_int(v, 0)
+                    if sid > 0:
+                        show_ids.append(sid)
+            except Exception:
+                show_ids = []
+
+            if show_ids:
+                updated = 0
+                skipped = 0
+                for sid in show_ids:
+                    if _sync_one_concert_show_remain_from_redis(sid):
+                        updated += 1
+                    else:
+                        skipped += 1
+                log.info(
+                    "remain_db_sync batch done: shows=%s updated=%s skipped=%s",
+                    len(show_ids),
+                    updated,
+                    skipped,
+                )
+
+        except Exception:
+            log.exception("remain_db_sync loop error")
+
+        if interval <= 0:
+            time.sleep(0.2)
+        else:
+            time.sleep(float(interval))
 
 def _parse_seat_key(value):
     parts = str(value or "").strip().split("-")
@@ -605,36 +737,6 @@ def _finalize_concert_hold_by_ref(booking_ref: str, *, restore_remain: bool) -> 
     return int(released)
 
 
-def _db_finalize_concert_hold_by_ref(booking_ref: str) -> None:
-    """
-    Redis(CACHE_ENABLED=false)에서도 홀드가 DB에 남아있을 수 있으므로,
-    worker 처리 완료 시 booking_ref 기반으로 DB 홀드를 정리한다.
-    - 성공/실패 모두: 해당 booking_ref로 잡힌 홀드는 삭제(확정 좌석은 concert_booking_seats ACTIVE가 가드)
-    """
-    ref = str(booking_ref or "").strip()
-    if not ref:
-        return
-    conn = None
-    try:
-        conn = get_tx_conn()
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM concert_seat_holds WHERE booking_ref = %s", (ref,))
-        conn.commit()
-    except Exception:
-        try:
-            if conn is not None:
-                conn.rollback()
-        except Exception:
-            pass
-        log.debug("DB hold finalize failed(ignored) ref=%s", ref, exc_info=True)
-    finally:
-        try:
-            if conn is not None:
-                conn.close()
-        except Exception:
-            pass
-
-
 def _handle_one_sqs_message(msg: dict) -> bool:
     """
     True  → 처리 완료(또는 이미 처리된 중복)로 메시지 삭제(ACK)해도 됨.
@@ -873,9 +975,7 @@ def _concert_poll_ok_from_db_if_complete(booking_ref: str, user_id: int, show_id
             if raw_prev:
                 prev = json.loads(raw_prev)
                 if prev.get("ok") is True:
-                    if CACHE_ENABLED:
-                        _finalize_concert_hold_by_ref(booking_ref, restore_remain=False)
-                    _db_finalize_concert_hold_by_ref(booking_ref)
+                    _finalize_concert_hold_by_ref(booking_ref, restore_remain=False)
                     _concert_delete_read_caches(concert_id=concert_id, show_id=show_id)
                     log.info("콘서트 멱등 복구: 폴링 OK 이미 있음 ref=%s", booking_ref)
                     return True
@@ -899,9 +999,7 @@ def _concert_poll_ok_from_db_if_complete(booking_ref: str, user_id: int, show_id
             booking_type="concert",
             entity_id=show_id,
         )
-        if CACHE_ENABLED:
-            _finalize_concert_hold_by_ref(booking_ref, restore_remain=False)
-        _db_finalize_concert_hold_by_ref(booking_ref)
+        _finalize_concert_hold_by_ref(booking_ref, restore_remain=False)
         _concert_delete_read_caches(concert_id=concert_id, show_id=show_id)
         log.info("콘서트 멱등 복구: DB에 이미 완료된 예매 ref=%s booking_id=%s", booking_ref, booking_id)
         return True
@@ -946,12 +1044,9 @@ def process_concert_booking(body):
                 if not show:
                     conn.rollback()
                     store_result(booking_ref, {"ok": False, "code": "NOT_FOUND"}, booking_type="concert", entity_id=show_id)
-                    if CACHE_ENABLED:
-                        _finalize_concert_hold_by_ref(booking_ref, restore_remain=True)
-                    _db_finalize_concert_hold_by_ref(booking_ref)
+                    _finalize_concert_hold_by_ref(booking_ref, restore_remain=True)
                     if pending_count > 0:
-                        if CACHE_ENABLED:
-                            _adjust_concert_remain(show_id, pending_count)
+                        _adjust_concert_remain(show_id, pending_count)
                     return
 
                 seat_rows = _to_int(show.get("seat_rows"))
@@ -1009,15 +1104,12 @@ def process_concert_booking(body):
                         try:
                             raw_prev = elasticache_booking_client.get(_booking_result_key(booking_ref))
                             if raw_prev and json.loads(raw_prev).get("ok") is True:
-                                if CACHE_ENABLED:
-                                    _finalize_concert_hold_by_ref(booking_ref, restore_remain=False)
-                                _db_finalize_concert_hold_by_ref(booking_ref)
+                                _finalize_concert_hold_by_ref(booking_ref, restore_remain=False)
                                 if pending_count > 0:
-                                    if CACHE_ENABLED:
-                                        _adjust_concert_pending(show_id, -pending_count)
-                                        _concert_delete_read_caches(
-                                            concert_id=_to_int(show.get("concert_id")), show_id=show_id
-                                        )
+                                    _adjust_concert_pending(show_id, -pending_count)
+                                _concert_delete_read_caches(
+                                    concert_id=_to_int(show.get("concert_id")), show_id=show_id
+                                )
                                 log.info("콘서트 멱등: sqs_booking_ref 재전달·DB 이미 완료 ref=%s", booking_ref)
                                 return
                         except Exception:
@@ -1040,12 +1132,9 @@ def process_concert_booking(body):
                             booking_type="concert",
                             entity_id=show_id,
                         )
-                        if CACHE_ENABLED:
-                            _finalize_concert_hold_by_ref(booking_ref, restore_remain=False)
-                        _db_finalize_concert_hold_by_ref(booking_ref)
+                        _finalize_concert_hold_by_ref(booking_ref, restore_remain=False)
                         if pending_count > 0:
-                            if CACHE_ENABLED:
-                                _adjust_concert_pending(show_id, -pending_count)
+                            _adjust_concert_pending(show_id, -pending_count)
                         _concert_delete_read_caches(concert_id=_to_int(show.get("concert_id")), show_id=show_id)
                         return
                     if have:
@@ -1056,13 +1145,10 @@ def process_concert_booking(body):
                             booking_type="concert",
                             entity_id=show_id,
                         )
-                        if CACHE_ENABLED:
-                            _finalize_concert_hold_by_ref(booking_ref, restore_remain=True)
-                        _db_finalize_concert_hold_by_ref(booking_ref)
+                        _finalize_concert_hold_by_ref(booking_ref, restore_remain=True)
                         if pending_count > 0:
-                            if CACHE_ENABLED:
-                                _adjust_concert_remain(show_id, pending_count)
-                                _adjust_concert_pending(show_id, -pending_count)
+                            _adjust_concert_remain(show_id, pending_count)
+                            _adjust_concert_pending(show_id, -pending_count)
                         return
 
                 if booking_id is None:
@@ -1073,13 +1159,10 @@ def process_concert_booking(body):
                         booking_type="concert",
                         entity_id=show_id,
                     )
-                    if CACHE_ENABLED:
-                        _finalize_concert_hold_by_ref(booking_ref, restore_remain=True)
-                    _db_finalize_concert_hold_by_ref(booking_ref)
+                    _finalize_concert_hold_by_ref(booking_ref, restore_remain=True)
                     if pending_count > 0:
-                        if CACHE_ENABLED:
-                            _adjust_concert_remain(show_id, pending_count)
-                            _adjust_concert_pending(show_id, -pending_count)
+                        _adjust_concert_remain(show_id, pending_count)
+                        _adjust_concert_pending(show_id, -pending_count)
                     return
 
                 if not booking_code:
@@ -1114,31 +1197,11 @@ def process_concert_booking(body):
                 )
                 payment_id = cur.lastrowid
 
-                # DB remain_count도 커밋과 함께 감소시켜 "DB를 보는 read/검증"이 동작하도록 한다.
-                # (극장 예매와 동일한 방식: remain_count = remain_count - req_count)
-                # 이 1행(concert_shows)은 핫스팟이지만, DB가 remain의 근거가 되려면 반드시 갱신이 필요하다.
-                cur.execute(
-                    "UPDATE concert_shows "
-                    "SET remain_count = GREATEST(0, remain_count - %s) "
-                    "WHERE show_id = %s",
-                    (req_count, show_id),
-                )
-
                 try:
-                    # DB가 최종값을 갖도록 갱신했으므로, 결과 remain_after는 DB 값을 우선한다.
-                    cur.execute(
-                        "SELECT remain_count FROM concert_shows WHERE show_id = %s LIMIT 1",
-                        (show_id,),
-                    )
-                    rr = cur.fetchone() or {}
-                    remain_count_after = _to_int(rr.get("remain_count"), 0)
+                    raw_remain = elasticache_read_cache_client.get(_concert_remain_count_key(show_id))
+                    remain_count_after = _to_int(raw_remain, 0)
                 except Exception:
-                    # fallback: Redis 운영 카운터(있으면)
-                    try:
-                        raw_remain = elasticache_read_cache_client.get(_concert_remain_count_key(show_id))
-                        remain_count_after = _to_int(raw_remain, 0)
-                    except Exception:
-                        remain_count_after = 0
+                    remain_count_after = 0
 
                 # NOTE: concert_shows status 업데이트는 핫스팟(모든 요청이 같은 1행)이라
                 # 트랜잭션 내에서 매번 건드리면 데드락이 급증한다.
@@ -1159,12 +1222,9 @@ def process_concert_booking(body):
                 booking_type="concert",
                 entity_id=show_id,
             )
-            if CACHE_ENABLED:
-                _finalize_concert_hold_by_ref(booking_ref, restore_remain=False)
-            _db_finalize_concert_hold_by_ref(booking_ref)
+            _finalize_concert_hold_by_ref(booking_ref, restore_remain=False)
             if pending_count > 0:
-                if CACHE_ENABLED:
-                    _adjust_concert_pending(show_id, -pending_count)
+                _adjust_concert_pending(show_id, -pending_count)
 
             _concert_delete_read_caches(concert_id=_to_int(show.get("concert_id")), show_id=show_id)
             _maybe_close_concert_show_if_soldout(show_id, remain_count_after)
@@ -1189,13 +1249,10 @@ def process_concert_booking(body):
                 booking_type="concert",
                 entity_id=show_id,
             )
-            if CACHE_ENABLED:
-                _finalize_concert_hold_by_ref(booking_ref, restore_remain=True)
-            _db_finalize_concert_hold_by_ref(booking_ref)
+            _finalize_concert_hold_by_ref(booking_ref, restore_remain=True)
             if pending_count > 0:
-                if CACHE_ENABLED:
-                    _adjust_concert_remain(show_id, pending_count)
-                    _adjust_concert_pending(show_id, -pending_count)
+                _adjust_concert_remain(show_id, pending_count)
+                _adjust_concert_pending(show_id, -pending_count)
             log.error("콘서트 예매 OperationalError: %s", oe)
             return
 
@@ -1215,13 +1272,10 @@ def process_concert_booking(body):
                     booking_type="concert",
                     entity_id=show_id,
                 )
-                if CACHE_ENABLED:
-                    _finalize_concert_hold_by_ref(booking_ref, restore_remain=True)
-                _db_finalize_concert_hold_by_ref(booking_ref)
+                _finalize_concert_hold_by_ref(booking_ref, restore_remain=True)
                 if pending_count > 0:
-                    if CACHE_ENABLED:
-                        _adjust_concert_remain(show_id, pending_count)
-                        _adjust_concert_pending(show_id, -pending_count)
+                    _adjust_concert_remain(show_id, pending_count)
+                    _adjust_concert_pending(show_id, -pending_count)
                 log.warning("콘서트 예매 FK 실패 ref=%s user_id=%s show_id=%s: %s", booking_ref, user_id, show_id, ie)
             elif _concert_poll_ok_from_db_if_complete(booking_ref, user_id, show_id, parsed_seats):
                 pass
@@ -1232,13 +1286,10 @@ def process_concert_booking(body):
                     booking_type="concert",
                     entity_id=show_id,
                 )
-                if CACHE_ENABLED:
-                    _finalize_concert_hold_by_ref(booking_ref, restore_remain=True)
-                _db_finalize_concert_hold_by_ref(booking_ref)
+                _finalize_concert_hold_by_ref(booking_ref, restore_remain=True)
                 if pending_count > 0:
-                    if CACHE_ENABLED:
-                        _adjust_concert_remain(show_id, pending_count)
-                        _adjust_concert_pending(show_id, -pending_count)
+                    _adjust_concert_remain(show_id, pending_count)
+                    _adjust_concert_pending(show_id, -pending_count)
             log.debug("콘서트 IntegrityError errno=%s: %s", errno, ie)
         except Exception as e:
             conn.rollback()
@@ -1248,13 +1299,10 @@ def process_concert_booking(body):
                 booking_type="concert",
                 entity_id=show_id,
             )
-            if CACHE_ENABLED:
-                _finalize_concert_hold_by_ref(booking_ref, restore_remain=True)
-            _db_finalize_concert_hold_by_ref(booking_ref)
+            _finalize_concert_hold_by_ref(booking_ref, restore_remain=True)
             if pending_count > 0:
-                if CACHE_ENABLED:
-                    _adjust_concert_remain(show_id, pending_count)
-                    _adjust_concert_pending(show_id, -pending_count)
+                _adjust_concert_remain(show_id, pending_count)
+                _adjust_concert_pending(show_id, -pending_count)
             log.error("콘서트 예매 처리 실패: %s", e)
         finally:
             conn.close()
@@ -1341,6 +1389,11 @@ import threading
 @asynccontextmanager
 async def lifespan(app):
     threads = []
+    # remain → DB sync loop (optional)
+    if REMAIN_DB_SYNC_ENABLED:
+        t_sync = threading.Thread(target=_remain_db_sync_loop, daemon=True)
+        t_sync.start()
+        threads.append(t_sync)
     for i in range(WORKER_SQS_POLLERS):
         t = threading.Thread(target=poll_loop, args=(i,), daemon=True)
         t.start()
