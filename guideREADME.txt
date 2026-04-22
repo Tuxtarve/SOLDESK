@@ -19,6 +19,78 @@
   - 애플리케이션: 영화·공연·극장 티켓팅 풀스택
 
 ==========================================================
+ 0. 사전 준비물 (한 번만 — 이미 다 있으면 건너뛰기)
+==========================================================
+
+──────────────────────────────────────────────────────────
+[0-A] 필요한 CLI 5개 설치
+──────────────────────────────────────────────────────────
+  aws, kubectl, helm, terraform, docker
+
+■ Windows (PowerShell 관리자 권한으로 열기 → 그대로 복붙)
+    winget install -e --id Amazon.AWSCLI
+    winget install -e --id Kubernetes.kubectl
+    winget install -e --id Helm.Helm
+    winget install -e --id Hashicorp.Terraform
+    winget install -e --id Docker.DockerDesktop
+  → 설치 끝나면 PowerShell 창 한 번 닫고 Git Bash 새로 열기.
+
+■ macOS (Homebrew 설치 후)
+    brew install awscli kubectl helm terraform
+    brew install --cask docker
+
+■ Ubuntu / WSL / VMware Linux
+    # AWS CLI v2
+    curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o awscliv2.zip \
+      && unzip -q awscliv2.zip && sudo ./aws/install && rm -rf aws awscliv2.zip
+    # kubectl
+    curl -LO "https://dl.k8s.io/release/$(curl -Ls https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl" \
+      && chmod +x kubectl && sudo mv kubectl /usr/local/bin/
+    # helm
+    curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+    # terraform
+    wget -O- https://apt.releases.hashicorp.com/gpg | sudo gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg \
+      && echo "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com $(lsb_release -cs) main" | sudo tee /etc/apt/sources.list.d/hashicorp.list \
+      && sudo apt update && sudo apt install -y terraform
+    # docker
+    curl -fsSL https://get.docker.com | sh && sudo usermod -aG docker $USER && newgrp docker
+
+설치 확인 (전부 버전이 나오면 OK):
+    aws --version
+    kubectl version --client
+    helm version --short
+    terraform -version
+    docker --version
+
+──────────────────────────────────────────────────────────
+[0-B] AWS 자격증명 등록 (aws configure)
+──────────────────────────────────────────────────────────
+AWS 콘솔 → IAM → 본인 user → Security credentials → "Create access key"
+(이미 있으면 재사용)
+
+터미널에서:
+    aws configure
+
+입력:
+    AWS Access Key ID:      [발급받은 키 ID]
+    AWS Secret Access Key:  [발급받은 시크릿]
+    Default region name:    ap-northeast-2
+    Default output format:  json
+
+확인 (본인 AWS 12자리 계정 ID 가 나오면 OK):
+    aws sts get-caller-identity
+
+──────────────────────────────────────────────────────────
+[0-C] Docker Desktop 실행
+──────────────────────────────────────────────────────────
+  Windows / macOS: Docker Desktop 앱 실행 (아이콘 바의 고래 🐳 "Running")
+  Linux: 위에서 설치했으면 자동 실행 중.
+
+확인 (컨테이너 리스트가 나오면 OK):
+    docker ps
+
+
+==========================================================
  1. Git Repo 자기 계정으로 복제
 ==========================================================
 
@@ -180,19 +252,38 @@ AWS_ROLE_ARN 시크릿 값을 "placeholder" → 위 ARN 으로 업데이트.
   → 회원가입 (Cognito) → 로그인 → 영화 목록 → 예매 테스트
 
 [B] ArgoCD UI (K8s 동기화 상태)
-  kubectl port-forward -n argocd svc/argocd-server 8080:80
-  브라우저: http://localhost:8080
-  로그인: admin / (비번은 아래 명령어)
+  setup-all.sh 마지막 출력의 "ArgoCD UI" 항목에 뜬 URL 을 브라우저에 붙여넣기.
+  (직접 조회하려면:
+      kubectl -n argocd get ingress argocd-server \
+        -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+  )
+  로그인: admin / 아래 명령으로 비번 조회
     kubectl -n argocd get secret argocd-initial-admin-secret \
       -o jsonpath="{.data.password}" | base64 -d
 
 [C] Grafana (모니터링 — 메트릭 + 로그 둘 다)
-  kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
-  브라우저: http://localhost:3000
-  로그인: admin / prom-operator
-  → 좌측 메뉴 Explore 탭에서:
-      데이터소스 "Prometheus" → 메트릭 쿼리 (PromQL)
-      데이터소스 "Loki"       → 로그 검색 (LogQL, 예: {namespace="ticketing"})
+  setup-all.sh 마지막 출력의 "Grafana" 항목 URL 을 브라우저에 붙여넣기.
+  → 주소 끝에 반드시 /grafana 가 붙어있어야 함 (예: http://<ALB>/grafana)
+  (직접 조회:
+      kubectl -n monitoring get ingress grafana \
+        -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
+  )
+  로그인: admin / 아래 명령으로 비번 조회 (기본값 prom-operator 이지만 확인 권장)
+    kubectl -n monitoring get secret kube-prometheus-stack-grafana \
+      -o jsonpath="{.data.admin-password}" | base64 -d
+
+  → 좌측 메뉴 Dashboards 에서 "Node Exporter / Nodes", "Kubernetes / Views /"
+    등 빌트인 대시보드 열어서 값 확인.
+  → 좌측 Explore 탭 → Loki 선택 → {namespace="ticketing"} 쿼리로 로그 검색.
+
+[C-2] ALB 접속이 안 되거나 VPN 환경이면 port-forward 로 fallback
+    # ArgoCD
+    kubectl port-forward -n argocd svc/argocd-server 8080:80
+    # 브라우저: http://localhost:8080
+
+    # Grafana
+    kubectl port-forward -n monitoring svc/kube-prometheus-stack-grafana 3000:80
+    # 브라우저: http://localhost:3000
 
 [D] 파드 상태 확인
   kubectl get pods -n ticketing
