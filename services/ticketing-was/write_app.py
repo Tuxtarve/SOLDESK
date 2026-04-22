@@ -1,14 +1,30 @@
+import asyncio
+import logging
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from typing import Any, Dict
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from cors_ensure_middleware import EnsureCrossOriginCredentialsMiddleware
-from auth.cognito_middleware import CognitoAuthMiddleware
 from auth.auth_user_write import router as auth_user_write_router
+from auth.cognito_middleware import CognitoAuthMiddleware
 from concert.concert_write import router as concert_write_router
-from concert.concert_startup_reconcile import reconcile_concert_remain_on_startup
 from cache.cache_builder import router as cache_builder_router
 from theater.theaters_write import router as theaters_write_router
 from user.user_write import router as user_write_router
+
+log = logging.getLogger("write_app")
+
+_startup_sync_state: Dict[str, Any] = {
+    "enabled": False,
+    "status": "not_started",  # not_started | running | ok | failed | skipped
+    "started_at": None,
+    "finished_at": None,
+    "result": None,
+    "error": None,
+}
 
 WRITE_ROUTERS = [
     user_write_router,
@@ -18,19 +34,46 @@ WRITE_ROUTERS = [
     cache_builder_router,
 ]
 
-app = FastAPI(title="Ticketing Write API")
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    from config import SYNC_REMAIN_COUNTS_ON_STARTUP
+
+    if SYNC_REMAIN_COUNTS_ON_STARTUP:
+        # write-api가 Ready 되기 전에(헬스체크 응답 전) 동기화를 끝내 웜업/조회가 과거 상태를 잡지 않게 한다.
+        from db_sync import sync_remain_counts_and_refresh_redis
+
+        _startup_sync_state["enabled"] = True
+        _startup_sync_state["status"] = "running"
+        _startup_sync_state["started_at"] = datetime.now(timezone.utc).isoformat()
+        _startup_sync_state["finished_at"] = None
+        _startup_sync_state["result"] = None
+        _startup_sync_state["error"] = None
+
+        try:
+            result = await asyncio.to_thread(sync_remain_counts_and_refresh_redis)
+            _startup_sync_state["status"] = "ok"
+            _startup_sync_state["result"] = result
+            log.info("startup db sync ok: %s", result)
+        except Exception:
+            # 실패 시에도 원인 확인을 위해 로그를 남기되, CrashLoop가 더 큰 장애를 만들 수 있으므로 기동은 계속한다.
+            _startup_sync_state["status"] = "failed"
+            _startup_sync_state["error"] = "exception"
+            log.exception("startup db sync failed")
+        finally:
+            _startup_sync_state["finished_at"] = datetime.now(timezone.utc).isoformat()
+    else:
+        _startup_sync_state["enabled"] = False
+        _startup_sync_state["status"] = "skipped"
+
+    yield
 
 
-@app.on_event("startup")
-def _startup_reconcile_concert_remain():
-    # 개발/재배포 시 DB 기준 remain 동기화(좌석 예매 건수 기반)
-    try:
-        reconcile_concert_remain_on_startup()
-    except Exception:
-        # write-api 기동 자체는 유지
-        import logging
+app = FastAPI(title="Ticketing Write API", lifespan=lifespan)
 
-        logging.getLogger("write_app").exception("startup remain reconcile failed")
+
+@app.get("/api/write/admin/startup-sync/status")
+def startup_sync_status():
+    return dict(_startup_sync_state)
 
 app.add_middleware(
     CORSMiddleware,

@@ -62,6 +62,22 @@ CACHE_WARMUP_INTERVAL_SEC = _get_int_env("CACHE_WARMUP_INTERVAL_SEC", 60, minimu
 # true: 주기 웜업 시 영화/극장 전체 리빌드 생략, 콘서트 목록만 갱신(대규모 오픈 시 부하 완화).
 CACHE_WARMUP_REPEAT_LIGHT = _get_bool_env("CACHE_WARMUP_REPEAT_LIGHT", False)
 
+# ── Startup DB sync (write-api) ───────────────────────────────────────────────
+# 목적: write-api 기동 시(최초/rollout restart) DB remain_count를 ACTIVE 예약좌석 기준으로 동기화.
+# NOTE: 네트워크/DB 지연으로 기동 시간이 길어질 수 있으니 k8s startupProbe를 함께 조정할 것.
+SYNC_REMAIN_COUNTS_ON_STARTUP = _get_bool_env("SYNC_REMAIN_COUNTS_ON_STARTUP", False)
+SYNC_DB_WAIT_MAX_SEC = _get_int_env("SYNC_DB_WAIT_MAX_SEC", 120, minimum=0)
+SYNC_DB_WAIT_INITIAL_BACKOFF_MS = _get_int_env("SYNC_DB_WAIT_INITIAL_BACKOFF_MS", 500, minimum=0)
+SYNC_DB_WAIT_MAX_BACKOFF_MS = _get_int_env("SYNC_DB_WAIT_MAX_BACKOFF_MS", 5000, minimum=0)
+
+# ── Read warmup ordering (read-api) ───────────────────────────────────────────
+# 목적: read-api 웜업이 "과거 remain_count"를 잡지 않도록, write-api startup sync 완료를 먼저 기다린다.
+READ_WAIT_FOR_WRITE_SYNC_ON_STARTUP = _get_bool_env("READ_WAIT_FOR_WRITE_SYNC_ON_STARTUP", True)
+READ_WAIT_FOR_WRITE_SYNC_MAX_SEC = _get_int_env("READ_WAIT_FOR_WRITE_SYNC_MAX_SEC", 180, minimum=0)
+READ_WAIT_FOR_WRITE_SYNC_INITIAL_BACKOFF_MS = _get_int_env("READ_WAIT_FOR_WRITE_SYNC_INITIAL_BACKOFF_MS", 300, minimum=0)
+READ_WAIT_FOR_WRITE_SYNC_MAX_BACKOFF_MS = _get_int_env("READ_WAIT_FOR_WRITE_SYNC_MAX_BACKOFF_MS", 3000, minimum=0)
+WRITE_API_BASE_URL = os.getenv("WRITE_API_BASE_URL", "http://write-api:5001").strip()
+
 # 논리 DB 분리: 노드 1대·요금 동일 → 조회 캐시 FLUSHDB 가 SQS 예매 키(booking:*)를 건드리지 않음.
 # (클러스터 모드 Redis에서는 미지원 — 현재 Terraform은 단일 노드 replication group)
 def _elasticache_db_index(name: str, default: int) -> int:

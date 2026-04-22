@@ -1,16 +1,19 @@
 import asyncio
 import logging
+import random
+import time
 from contextlib import asynccontextmanager
+from urllib.error import URLError
+from urllib.request import Request, urlopen
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from cors_ensure_middleware import EnsureCrossOriginCredentialsMiddleware
-from auth.cognito_middleware import CognitoAuthMiddleware
 from auth.auth_user_read import router as auth_user_read_router
+from auth.cognito_middleware import CognitoAuthMiddleware
 from concert.concert_read import router as concert_read_router
 from concert.concert_read_cache import warmup_concert_caches
-from concert.concert_startup_reconcile import reconcile_concert_remain_on_startup
 from movie.movie_cache_builder import rebuild_movie_cache
 from movie.movie_read import router as movie_read_router
 from theater.theaters_cache_builder import rebuild_theaters_cache
@@ -86,6 +89,59 @@ def _warmup_all_sync() -> None:
             log.exception("cache warmup failed: %s", name)
 
 
+def _http_get_json(url: str, *, timeout_sec: float = 2.0) -> dict | None:
+    try:
+        req = Request(url, method="GET")
+        with urlopen(req, timeout=float(timeout_sec)) as resp:
+            raw = resp.read()
+        import json
+
+        return json.loads(raw.decode("utf-8"))
+    except Exception:
+        return None
+
+
+def _wait_for_write_startup_sync_sync() -> None:
+    """
+    read-api 기동 시점에, write-api startup sync(ok) 완료를 기다린다.
+    실패/타임아웃이어도 read-api는 기동한다(과거 상태 웜업 가능성은 남지만 서비스 가용성이 우선).
+    """
+    from config import (
+        READ_WAIT_FOR_WRITE_SYNC_INITIAL_BACKOFF_MS,
+        READ_WAIT_FOR_WRITE_SYNC_MAX_BACKOFF_MS,
+        READ_WAIT_FOR_WRITE_SYNC_MAX_SEC,
+        WRITE_API_BASE_URL,
+    )
+
+    base = (WRITE_API_BASE_URL or "").rstrip("/")
+    url = f"{base}/api/write/admin/startup-sync/status"
+    deadline = time.monotonic() + max(0, int(READ_WAIT_FOR_WRITE_SYNC_MAX_SEC))
+
+    backoff_ms = max(0, int(READ_WAIT_FOR_WRITE_SYNC_INITIAL_BACKOFF_MS))
+    max_backoff_ms = max(0, int(READ_WAIT_FOR_WRITE_SYNC_MAX_BACKOFF_MS))
+
+    while True:
+        st = _http_get_json(url, timeout_sec=2.0) or {}
+        status = str(st.get("status") or "")
+        enabled = bool(st.get("enabled"))
+        if not enabled or status == "skipped":
+            log.info("write startup sync disabled/skip; proceeding warmup: %s", st)
+            return
+        if status == "ok":
+            log.info("write startup sync ok; proceeding warmup: %s", st)
+            return
+        if time.monotonic() >= deadline:
+            log.warning("write startup sync wait timeout; proceeding warmup: %s", st)
+            return
+
+        if backoff_ms <= 0:
+            time.sleep(0.2)
+        else:
+            sleep_ms = int(backoff_ms * (0.8 + 0.4 * random.random()))
+            time.sleep(max(0.0, float(sleep_ms) / 1000.0))
+            backoff_ms = min(max_backoff_ms, max(backoff_ms, 1) * 2)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     from config import (
@@ -94,19 +150,16 @@ async def lifespan(app: FastAPI):
         CACHE_WARMUP_INTERVAL_SEC,
         CACHE_WARMUP_TOTAL_RUNS,
     )
+    from config import READ_WAIT_FOR_WRITE_SYNC_ON_STARTUP
 
     repeat_task: asyncio.Task | None = None
-
-    # 개발/재배포 시 DB 기준 remain 동기화(좌석 예매 건수 기반)
-    try:
-        await asyncio.to_thread(reconcile_concert_remain_on_startup)
-    except Exception:
-        log.exception("startup remain reconcile failed")
 
     if CACHE_ENABLED and CACHE_WARMUP_ENABLED:
         from config import CACHE_WARMUP_REPEAT_LIGHT
 
         try:
+            if READ_WAIT_FOR_WRITE_SYNC_ON_STARTUP:
+                await asyncio.to_thread(_wait_for_write_startup_sync_sync)
             await asyncio.to_thread(_warmup_all_sync)
         except Exception:
             log.exception("initial cache warmup (thread) failed")
