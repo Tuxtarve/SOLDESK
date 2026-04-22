@@ -243,6 +243,7 @@ class _SafeRedisClient:
     except Exception:
       return iter(())
 
+
 if not CACHE_ENABLED:
   # hard bypass: do NOT create a Redis client at all.
   redis_client = _NoopRedisClient()
