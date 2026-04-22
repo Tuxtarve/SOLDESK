@@ -32,11 +32,11 @@ resource "aws_cognito_user_pool" "main" {
 
 # 회원가입 시 이메일 인증 없이 자동 확인하는 Lambda
 resource "aws_lambda_function" "auto_confirm" {
-  function_name = "${var.app_name}-auto-confirm"
-  runtime       = "python3.12"
-  handler       = "index.handler"
-  role          = aws_iam_role.lambda_auto_confirm.arn
-  filename      = data.archive_file.auto_confirm.output_path
+  function_name    = "${var.app_name}-auto-confirm"
+  runtime          = "python3.12"
+  handler          = "index.handler"
+  role             = aws_iam_role.lambda_auto_confirm.arn
+  filename         = data.archive_file.auto_confirm.output_path
   source_code_hash = data.archive_file.auto_confirm.output_base64sha256
 }
 

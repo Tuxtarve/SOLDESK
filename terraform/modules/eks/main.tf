@@ -1,6 +1,7 @@
 # destroy 순서: 이 null_resource 먼저 삭제(→ cleanup 실행) → 노드그룹 → EKS 클러스터
 # depends_on 으로 EKS/노드가 살아 있는 동안 kubectl 정리가 수행되도록 보장한다.
 # ALB Controller가 만든 로드밸런서·타겟그룹·ENI를 제거해야 VPC destroy가 성공한다.
+# 아래 sleep 은 잔여 ENI/ALB 때문에 subnet 삭제가 막히는 걸 줄이기 위함 — 줄이면 destroy 실패율이 올라갈 수 있음.
 resource "null_resource" "cleanup_k8s_resources" {
   triggers = {
     cluster_name = var.cluster_name
@@ -14,133 +15,37 @@ resource "null_resource" "cleanup_k8s_resources" {
   ]
 
   provisioner "local-exec" {
-    when    = destroy
-    command = <<-EOT
-      echo "=== Cleaning up Kubernetes-managed AWS resources before EKS destroy ==="
+    interpreter = ["bash", "-c"]
+    when        = destroy
+    environment = {
+      EKS_CLUSTER_NAME = self.triggers.cluster_name
+      EKS_REGION       = self.triggers.region
+      EKS_VPC_ID       = self.triggers.vpc_id
+    }
+    # HGFS/Windows 등에서 .tf 가 CRLF 일 때 heredoc 이 깨지므로 스크립트 파일 + 실행 시 CR 제거
+    command = "tr -d '\\r' < \"${path.module}/scripts/cleanup_k8s_resources_on_destroy.sh\" | bash"
+  }
+}
 
-      # kubeconfig 업데이트 (클러스터가 아직 살아 있는 경우)
-      if aws eks describe-cluster --name ${self.triggers.cluster_name} --region ${self.triggers.region} >/dev/null 2>&1; then
-        aws eks update-kubeconfig --name ${self.triggers.cluster_name} --region ${self.triggers.region} 2>/dev/null || true
+# NOTE:
+# - 위 cleanup_k8s_resources 는 "EKS/노드가 살아있는 동안" Ingress/SVC 등을 먼저 내리기 위한 선행 정리다.
+# - 하지만 실제로는 노드그룹 종료 후에 aws-k8s ENI가 'available' 상태로 남는 타이밍이 발생할 수 있다.
+# - 아래 cleanup_vpc_leftovers_post 는 노드그룹/클러스터 삭제 "후"에 한 번 더 ENI 잔재를 지워서
+#   subnet 삭제가 막히는 상황을 줄인다.
+resource "null_resource" "cleanup_vpc_leftovers_post" {
+  triggers = {
+    region = var.aws_region
+    vpc_id = var.vpc_id
+  }
 
-        # Ingress 리소스 삭제 → ALB Controller가 ALB/TG 정리
-        kubectl delete ingress --all --all-namespaces --timeout=120s 2>/dev/null || true
-
-        # LoadBalancer 타입 Service 삭제 → NLB/CLB 정리
-        kubectl delete svc --field-selector spec.type=LoadBalancer --all-namespaces --timeout=120s 2>/dev/null || true
-
-        echo "Waiting 60s for AWS resources to be cleaned up by controllers..."
-        sleep 60
-      fi
-
-      # 클러스터 접근 불가 시 직접 정리: VPC 내 남은 ELB 삭제
-      VPC_ID="${self.triggers.vpc_id}"
-
-      if [ -n "$VPC_ID" ]; then
-        echo "Cleaning up leftover ELBs in VPC $VPC_ID..."
-
-        # ALB/NLB 정리
-        for LB_ARN in $(aws elbv2 describe-load-balancers --region ${self.triggers.region} \
-          --query "LoadBalancers[?VpcId=='$VPC_ID'].LoadBalancerArn" --output text 2>/dev/null); do
-          echo "Deleting load balancer: $LB_ARN"
-          aws elbv2 delete-load-balancer --load-balancer-arn "$LB_ARN" --region ${self.triggers.region} 2>/dev/null || true
-        done
-
-        # Classic ELB 정리
-        for CLB_NAME in $(aws elb describe-load-balancers --region ${self.triggers.region} \
-          --query "LoadBalancerDescriptions[?VPCId=='$VPC_ID'].LoadBalancerName" --output text 2>/dev/null); do
-          echo "Deleting classic LB: $CLB_NAME"
-          aws elb delete-load-balancer --load-balancer-name "$CLB_NAME" --region ${self.triggers.region} 2>/dev/null || true
-        done
-
-        # Target Group 정리
-        for TG_ARN in $(aws elbv2 describe-target-groups --region ${self.triggers.region} \
-          --query "TargetGroups[?VpcId=='$VPC_ID'].TargetGroupArn" --output text 2>/dev/null); do
-          echo "Deleting target group: $TG_ARN"
-          aws elbv2 delete-target-group --target-group-arn "$TG_ARN" --region ${self.triggers.region} 2>/dev/null || true
-        done
-
-        echo "Waiting 30s for ENIs to detach..."
-        sleep 30
-
-        # EIP 해제 (IGW detach 차단 원인 — "mapped public address(es)")
-        echo "Releasing Elastic IPs in VPC $VPC_ID..."
-        for ALLOC_ID in $(aws ec2 describe-addresses --region ${self.triggers.region} \
-          --filters "Name=domain,Values=vpc" \
-          --query "Addresses[?NetworkInterfaceId!=null].{A:AllocationId,N:NetworkInterfaceId}" \
-          --output text 2>/dev/null | while read AID NID; do
-            # 이 EIP가 VPC 내 ENI에 연결되었는지 확인
-            ENI_VPC=$(aws ec2 describe-network-interfaces --region ${self.triggers.region} \
-              --network-interface-ids "$NID" \
-              --query 'NetworkInterfaces[0].VpcId' --output text 2>/dev/null)
-            if [ "$ENI_VPC" = "$VPC_ID" ]; then echo "$AID"; fi
-          done); do
-          echo "Disassociating and releasing EIP: $ALLOC_ID"
-          ASSOC_ID=$(aws ec2 describe-addresses --region ${self.triggers.region} \
-            --allocation-ids "$ALLOC_ID" \
-            --query 'Addresses[0].AssociationId' --output text 2>/dev/null)
-          if [ "$ASSOC_ID" != "None" ] && [ -n "$ASSOC_ID" ]; then
-            aws ec2 disassociate-address --association-id "$ASSOC_ID" --region ${self.triggers.region} 2>/dev/null || true
-          fi
-          aws ec2 release-address --allocation-id "$ALLOC_ID" --region ${self.triggers.region} 2>/dev/null || true
-        done
-
-        # 연결되지 않은(미사용) EIP도 정리
-        for ALLOC_ID in $(aws ec2 describe-addresses --region ${self.triggers.region} \
-          --filters "Name=domain,Values=vpc" \
-          --query "Addresses[?AssociationId==null].AllocationId" --output text 2>/dev/null); do
-          echo "Releasing unused EIP: $ALLOC_ID"
-          aws ec2 release-address --allocation-id "$ALLOC_ID" --region ${self.triggers.region} 2>/dev/null || true
-        done
-
-        # in-use ENI 분리 후 삭제 (ELB/k8s가 남긴 것 — 프라이머리 ENI 제외)
-        echo "Cleaning up leftover ENIs in VPC $VPC_ID..."
-        for ENI_ID in $(aws ec2 describe-network-interfaces --region ${self.triggers.region} \
-          --filters "Name=vpc-id,Values=$VPC_ID" \
-          --query "NetworkInterfaces[?Attachment.DeviceIndex!=\`0\` || Attachment.AttachmentId==null].NetworkInterfaceId" \
-          --output text 2>/dev/null); do
-          # in-use 상태면 먼저 분리
-          ATTACH_ID=$(aws ec2 describe-network-interfaces --region ${self.triggers.region} \
-            --network-interface-ids "$ENI_ID" \
-            --query 'NetworkInterfaces[0].Attachment.AttachmentId' --output text 2>/dev/null)
-          if [ "$ATTACH_ID" != "None" ] && [ -n "$ATTACH_ID" ]; then
-            echo "Detaching ENI: $ENI_ID"
-            aws ec2 detach-network-interface --attachment-id "$ATTACH_ID" --force --region ${self.triggers.region} 2>/dev/null || true
-          fi
-        done
-        sleep 15
-        for ENI_ID in $(aws ec2 describe-network-interfaces --region ${self.triggers.region} \
-          --filters "Name=vpc-id,Values=$VPC_ID" "Name=status,Values=available" \
-          --query 'NetworkInterfaces[*].NetworkInterfaceId' --output text 2>/dev/null); do
-          echo "Deleting ENI: $ENI_ID"
-          aws ec2 delete-network-interface --network-interface-id "$ENI_ID" --region ${self.triggers.region} 2>/dev/null || true
-        done
-
-        # k8s가 생성한 보안 그룹 정리 (default SG 제외)
-        # 상호 참조 규칙을 먼저 제거해야 삭제 가능
-        echo "Cleaning up non-default security groups in VPC $VPC_ID..."
-        K8S_SGS=$(aws ec2 describe-security-groups --region ${self.triggers.region} \
-          --filters "Name=vpc-id,Values=$VPC_ID" \
-          --query "SecurityGroups[?GroupName!='default'].GroupId" \
-          --output text 2>/dev/null)
-        # 1단계: 모든 인바운드/아웃바운드 규칙 제거 (상호 참조 해소)
-        for SG_ID in $K8S_SGS; do
-          echo "Revoking rules for SG: $SG_ID"
-          aws ec2 revoke-security-group-ingress --group-id "$SG_ID" --region ${self.triggers.region} \
-            --ip-permissions "$(aws ec2 describe-security-groups --group-ids "$SG_ID" --region ${self.triggers.region} \
-            --query 'SecurityGroups[0].IpPermissions' --output json 2>/dev/null)" 2>/dev/null || true
-          aws ec2 revoke-security-group-egress --group-id "$SG_ID" --region ${self.triggers.region} \
-            --ip-permissions "$(aws ec2 describe-security-groups --group-ids "$SG_ID" --region ${self.triggers.region} \
-            --query 'SecurityGroups[0].IpPermissionsEgress' --output json 2>/dev/null)" 2>/dev/null || true
-        done
-        # 2단계: 보안 그룹 삭제
-        for SG_ID in $K8S_SGS; do
-          echo "Deleting security group: $SG_ID"
-          aws ec2 delete-security-group --group-id "$SG_ID" --region ${self.triggers.region} 2>/dev/null || true
-        done
-      fi
-
-      echo "=== Cleanup complete ==="
-    EOT
+  provisioner "local-exec" {
+    interpreter = ["bash", "-c"]
+    when        = destroy
+    environment = {
+      EKS_POST_REGION = self.triggers.region
+      EKS_POST_VPC_ID = self.triggers.vpc_id
+    }
+    command = "tr -d '\\r' < \"${path.module}/scripts/cleanup_vpc_enis_post_eks_destroy.sh\" | bash"
   }
 }
 
@@ -154,8 +59,13 @@ data "aws_iam_policy_document" "eks_assume" {
   }
 }
 
+locals {
+  # IAM Role/Policy names have length limits; keep stable but avoid hardcoding.
+  name_prefix = substr(replace(var.cluster_name, "/[^a-zA-Z0-9+=,.@_-]/", "-"), 0, 32)
+}
+
 resource "aws_iam_role" "eks_cluster" {
-  name               = "ticketing-eks-cluster-role"
+  name               = "${local.name_prefix}-eks-cluster-role"
   assume_role_policy = data.aws_iam_policy_document.eks_assume.json
 }
 
@@ -176,6 +86,7 @@ resource "aws_eks_cluster" "main" {
 
   depends_on = [
     aws_iam_role_policy_attachment.eks_cluster,
+    null_resource.cleanup_vpc_leftovers_post,
   ]
   tags = { Name = var.cluster_name, Environment = var.env }
 }
@@ -192,7 +103,7 @@ data "aws_iam_policy_document" "node_assume" {
 }
 
 resource "aws_iam_role" "eks_node" {
-  name               = "ticketing-eks-node-role"
+  name               = "${local.name_prefix}-eks-node-role"
   assume_role_policy = data.aws_iam_policy_document.node_assume.json
 }
 
@@ -211,19 +122,44 @@ resource "aws_iam_role_policy_attachment" "eks_node_ecr" {
   policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
 }
 
-# 워커 노드 그룹 (t3.small × 2 — 앱 서비스 전용)
+# 노드당 Pod 상한(보통 ENI·보조 IP 개수) 완화 — prefix delegation. 기존 클러스터에 vpc-cni 가 이미 있으면:
+#   terraform import 'module.eks.aws_eks_addon.vpc_cni' '<클러스터명>:vpc-cni'
+data "aws_eks_addon_version" "vpc_cni" {
+  addon_name         = "vpc-cni"
+  kubernetes_version = aws_eks_cluster.main.version
+  most_recent        = true
+}
+
+resource "aws_eks_addon" "vpc_cni" {
+  cluster_name                = aws_eks_cluster.main.name
+  addon_name                  = "vpc-cni"
+  addon_version               = data.aws_eks_addon_version.vpc_cni.version
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  configuration_values = jsonencode({
+    env = {
+      ENABLE_PREFIX_DELEGATION = "true"
+      WARM_PREFIX_TARGET       = "1"
+    }
+  })
+
+  depends_on = [aws_eks_cluster.main]
+}
+
+# 워커 노드 그룹 — CA scale-up 한도는 scaling_config.max_size (AWS ASG). 태그 없으면 CA가 ASG를 못 찾음.
 resource "aws_eks_node_group" "app" {
   cluster_name    = aws_eks_cluster.main.name
-  node_group_name = "ticketing-app-nodes"
+  node_group_name = "${local.name_prefix}-app-nodes"
   node_role_arn   = aws_iam_role.eks_node.arn
   subnet_ids      = var.subnet_ids
-  instance_types  = ["t3.small"]
+  instance_types  = var.app_node_instance_types
   ami_type        = "AL2023_x86_64_STANDARD"
 
   scaling_config {
-    desired_size = 2
-    min_size     = 2
-    max_size     = 15
+    desired_size = var.app_node_desired_size
+    min_size     = var.app_node_min_size
+    max_size     = var.app_node_max_size
   }
 
   update_config { max_unavailable = 1 }
@@ -234,60 +170,45 @@ resource "aws_eks_node_group" "app" {
     aws_iam_role_policy_attachment.eks_node_worker,
     aws_iam_role_policy_attachment.eks_node_cni,
     aws_iam_role_policy_attachment.eks_node_ecr,
+    aws_eks_addon.vpc_cni,
+    null_resource.cleanup_vpc_leftovers_post,
   ]
 
-  tags = { Name = "ticketing-app-nodes", Environment = var.env }
+  # Cluster Autoscaler(Helm autoDiscovery)가 ASG를 찾으려면 두 태그가 ASG에 있어야 함.
+  # 없으면 CA는 동작해 보여도 scale-up 대상 그룹이 0이라 노드가 늘지 않고 파드만 Pending.
+  tags = merge(
+    {
+      Name        = "${local.name_prefix}-app-nodes"
+      Environment = var.env
+    },
+    {
+      "k8s.io/cluster-autoscaler/enabled"             = "true"
+      "k8s.io/cluster-autoscaler/${var.cluster_name}" = "owned"
+    }
+  )
 }
 
-# ── EBS CSI Driver (kube-prometheus-stack PVC 등) ──────────────────
-resource "aws_iam_role" "ebs_csi" {
-  name = "ticketing-ebs-csi-driver-role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Federated = aws_iam_openid_connect_provider.eks.arn
-      }
-      Action = "sts:AssumeRoleWithWebIdentity"
-      Condition = {
-        StringEquals = {
-          "${local.oidc_issuer}:sub" = "system:serviceaccount:kube-system:ebs-csi-controller-sa"
-          "${local.oidc_issuer}:aud" = "sts.amazonaws.com"
-        }
-      }
-    }]
-  })
+# HPA(Resource)가 cpu/memory utilization 을 받으려면 metrics.k8s.io API 가 필요 — EKS 관리 애드온으로 고정
+data "aws_eks_addon_version" "metrics_server" {
+  addon_name         = "metrics-server"
+  kubernetes_version = aws_eks_cluster.main.version
+  most_recent        = true
 }
 
-resource "aws_iam_role_policy_attachment" "ebs_csi" {
-  role       = aws_iam_role.ebs_csi.name
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
-}
-
-resource "aws_eks_addon" "ebs_csi" {
-  cluster_name             = aws_eks_cluster.main.name
-  addon_name               = "aws-ebs-csi-driver"
-  service_account_role_arn = aws_iam_role.ebs_csi.arn
-  resolve_conflicts_on_create = "OVERWRITE"
-
-  depends_on = [aws_eks_node_group.app]
-}
-
-# metrics-server — HPA 가 읽는 metrics.k8s.io API 를 제공.
-# 없으면 kubectl top / HPA 의 CPU·memory utilization 이 <unknown> 으로 뜬다.
-# IRSA 불필요 (AWS API 호출 없음). addon_version 미지정 → EKS 버전 기본값 사용.
 resource "aws_eks_addon" "metrics_server" {
   cluster_name                = aws_eks_cluster.main.name
   addon_name                  = "metrics-server"
+  addon_version               = data.aws_eks_addon_version.metrics_server.version
   resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+  # EKS metrics-server 애드온 configuration_values 스키마에 replicaCount(Helm) 없음 — 레플리카는 post_apply_k8s_bootstrap.sh 에서 kubectl scale
 
   depends_on = [aws_eks_node_group.app]
 }
 
 # ALB Controller IAM (Ingress 자동 생성용)
 resource "aws_iam_policy" "alb_controller" {
-  name   = "ticketing-alb-controller-policy"
+  name   = "${local.name_prefix}-alb-controller-policy"
   policy = file("${path.module}/alb-controller-policy.json")
 }
 
@@ -304,7 +225,7 @@ resource "aws_iam_openid_connect_provider" "eks" {
 }
 
 resource "aws_iam_role" "alb_controller" {
-  name = "ticketing-alb-controller-role"
+  name = "${local.name_prefix}-alb-controller-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -330,7 +251,7 @@ resource "aws_iam_role_policy_attachment" "alb_controller" {
 
 # Cluster Autoscaler IAM (노드 자동 스케일링용)
 resource "aws_iam_policy" "cluster_autoscaler" {
-  name = "ticketing-cluster-autoscaler-policy"
+  name = "${local.name_prefix}-cluster-autoscaler-policy"
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -355,7 +276,7 @@ resource "aws_iam_policy" "cluster_autoscaler" {
 }
 
 resource "aws_iam_role" "cluster_autoscaler" {
-  name = "ticketing-cluster-autoscaler-role"
+  name = "${local.name_prefix}-cluster-autoscaler-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
     Statement = [{
@@ -379,69 +300,31 @@ resource "aws_iam_role_policy_attachment" "cluster_autoscaler" {
   policy_arn = aws_iam_policy.cluster_autoscaler.arn
 }
 
-# KEDA operator용 IRSA (SQS 큐 길이 기반 스케일링)
-# KEDA Helm 차트의 기본 service account 이름: keda-operator (네임스페이스: keda)
-resource "aws_iam_role" "keda_operator" {
-  name = "ticketing-keda-operator-role"
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Federated = aws_iam_openid_connect_provider.eks.arn
-      }
-      Action = "sts:AssumeRoleWithWebIdentity"
-      Condition = {
-        StringEquals = {
-          "${local.oidc_issuer}:sub" = "system:serviceaccount:keda:keda-operator"
-          "${local.oidc_issuer}:aud" = "sts.amazonaws.com"
-        }
-      }
-    }]
-  })
-}
-
-resource "aws_iam_role_policy" "keda_operator_sqs" {
-  name = "ticketing-keda-operator-sqs-policy"
-  role = aws_iam_role.keda_operator.name
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "sqs:GetQueueAttributes",
-        "sqs:GetQueueUrl",
-      ]
-      Resource = var.sqs_queue_arns
-    }]
-  })
-}
-
 # SQS 접근용 IRSA (reserv-svc, worker-svc 공용)
 resource "aws_iam_role" "sqs_access" {
-  name = "ticketing-sqs-access-role"
+  name = "${local.name_prefix}-sqs-access-role"
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Principal = {
-        Federated = aws_iam_openid_connect_provider.eks.arn
-      }
-      Action = "sts:AssumeRoleWithWebIdentity"
-      Condition = {
-        StringEquals = {
-          "${local.oidc_issuer}:aud" = "sts.amazonaws.com"
+    Statement = [
+      {
+        Effect = "Allow"
+        Principal = {
+          Federated = aws_iam_openid_connect_provider.eks.arn
         }
-        StringLike = {
-          "${local.oidc_issuer}:sub" = "system:serviceaccount:ticketing:sqs-access-sa"
+        Action = "sts:AssumeRoleWithWebIdentity"
+        Condition = {
+          StringEquals = {
+            "${local.oidc_issuer}:aud" = "sts.amazonaws.com"
+            "${local.oidc_issuer}:sub" = "system:serviceaccount:ticketing:sqs-access-sa"
+          }
         }
       }
-    }]
+    ]
   })
 }
 
 resource "aws_iam_role_policy" "sqs_access" {
-  name = "ticketing-sqs-access-policy"
+  name = "${local.name_prefix}-sqs-access-policy"
   role = aws_iam_role.sqs_access.name
   policy = jsonencode({
     Version = "2012-10-17"
@@ -451,6 +334,7 @@ resource "aws_iam_role_policy" "sqs_access" {
         "sqs:SendMessage",
         "sqs:ReceiveMessage",
         "sqs:DeleteMessage",
+        "sqs:GetQueueUrl",
         "sqs:GetQueueAttributes",
       ]
       Resource = var.sqs_queue_arns

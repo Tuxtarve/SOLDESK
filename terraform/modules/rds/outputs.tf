@@ -3,7 +3,7 @@ output "writer_endpoint" {
   sensitive = true
 }
 output "reader_endpoint" {
-  value     = aws_db_instance.reader.address
+  value     = null
   sensitive = true
 }
 output "db_port" {

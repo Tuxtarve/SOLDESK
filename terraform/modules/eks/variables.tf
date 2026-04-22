@@ -17,3 +17,23 @@ variable "sqs_queue_arns" {
   description = "SQS queue ARNs for IRSA"
   default     = []
 }
+
+variable "app_node_instance_types" {
+  type        = list(string)
+  description = "워커 노드 인스턴스 타입(평시 1대·max 확장 시 수평 증설)."
+}
+
+variable "app_node_desired_size" {
+  type        = number
+  description = "평시 desired 노드 수."
+}
+
+variable "app_node_min_size" {
+  type        = number
+  description = "최소 노드(비용 바닥)."
+}
+
+variable "app_node_max_size" {
+  type        = number
+  description = "피크 시 상한. Cluster Autoscaler + HPA(read-api 등)와 함께 쓸 것."
+}

@@ -1,7 +1,7 @@
 variable "env" {
-    type = string
+  type = string
 }
 
 variable "aws_account" {
-    type = string
+  type = string
 }

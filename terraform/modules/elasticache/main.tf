@@ -5,13 +5,14 @@ resource "aws_elasticache_subnet_group" "main" {
 
 resource "aws_elasticache_replication_group" "redis" {
   replication_group_id = "ticketing-redis"
-  description          = "Ticketing Redis replication group"
-  engine               = "redis"
-  engine_version       = "7.0"
-  node_type            = "cache.t3.micro"
-  port                 = 6379
+  # AWS: description must be printable ASCII only (no CJK / control chars).
+  description    = "Ticketing ElastiCache Redis single-node cache"
+  engine         = "redis"
+  engine_version = "7.0"
+  node_type      = var.node_type
+  port           = 6379
 
-  # 단일 노드 (비용 절감)
+  # Single node (no replica) to minimize cost
   num_cache_clusters         = 1
   automatic_failover_enabled = false
   multi_az_enabled           = false

@@ -16,9 +16,9 @@ resource "aws_apigatewayv2_api" "main" {
   description   = "Ticketing API Gateway — Cognito JWT 인증 + Internal ALB 프록시"
 
   cors_configuration {
-    allow_origins = ["*"]
-    allow_methods = ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]
-    allow_headers = ["Authorization", "Content-Type", "x-amz-date", "x-amz-security-token"]
+    allow_origins  = ["*"]
+    allow_methods  = ["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"]
+    allow_headers  = ["Authorization", "Content-Type", "x-amz-date", "x-amz-security-token"]
     expose_headers = ["*"]
     max_age        = 300
   }

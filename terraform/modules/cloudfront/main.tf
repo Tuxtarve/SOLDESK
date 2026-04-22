@@ -127,7 +127,7 @@ with open(sys.argv[1], 'w') as f:
       forwarded_values {
         query_string = true
         # Host는 API GW가 자체 도메인을 기대하므로 forward 하면 안 됨
-        headers      = ["Authorization", "Content-Type", "CloudFront-Forwarded-Proto"]
+        headers = ["Authorization", "Content-Type", "CloudFront-Forwarded-Proto"]
         cookies { forward = "none" }
       }
 

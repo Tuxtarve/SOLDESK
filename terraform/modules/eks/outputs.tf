@@ -9,4 +9,10 @@ output "cluster_autoscaler_role_arn" { value = aws_iam_role.cluster_autoscaler.a
 output "cluster_security_group_id" { value = aws_eks_cluster.main.vpc_config[0].cluster_security_group_id }
 output "sqs_access_role_arn" { value = aws_iam_role.sqs_access.arn }
 output "keda_operator_role_arn" { value = aws_iam_role.keda_operator.arn }
-output "ebs_csi_role_arn" { value = aws_iam_role.ebs_csi.arn }
+
+output "app_node_group_name" {
+  value       = aws_eks_node_group.app.node_group_name
+  description = "Managed node group name for app nodes (read/write, etc)."
+}
+
+
