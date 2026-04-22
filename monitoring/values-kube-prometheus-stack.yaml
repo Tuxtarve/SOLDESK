@@ -183,12 +183,18 @@ alertmanager:
         equal: ['alertname']
 
 # ── Node Exporter ──────────────────────────────────────
+# 활성화 시 DaemonSet 이 모든 노드에 뜨며 node_cpu_*/node_memory_*/node_filesystem_*
+# 메트릭 제공. 그래프 1860("Node Exporter Full") / 빌트인 "Node Exporter / Nodes"
+# 등 Node 레벨 대시보드가 값을 채우려면 필수.
 nodeExporter:
-  enabled: false
+  enabled: true
 
 # ── kube-state-metrics ─────────────────────────────────
+# 활성화 시 kube_pod_* / kube_deployment_* / kube_node_* 메트릭 제공.
+# "Kubernetes / Views / Nodes", "Kubernetes / Views / Pods" 같은 cluster-wide
+# 대시보드에서 cluster/node/pod dropdown 을 채우려면 필수.
 kubeStateMetrics:
-  enabled: false
+  enabled: true
 
 # ── Prometheus Operator ────────────────────────────────
 prometheusOperator:
