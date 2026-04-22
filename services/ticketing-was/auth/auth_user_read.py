@@ -24,7 +24,7 @@ def auth_me(request: Request):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT user_id, cognito_sub, email, name FROM users WHERE user_id = %s",
+                "SELECT user_id, cognito_sub, email, name, phone FROM users WHERE user_id = %s",
                 (int(user_id),),
             )
             user = cur.fetchone()
@@ -37,6 +37,7 @@ def auth_me(request: Request):
                 "user_id": user["user_id"],
                 "email": user.get("email", ""),
                 "name": user.get("name", ""),
+                "phone": user.get("phone") or "",
             },
         }
     finally:

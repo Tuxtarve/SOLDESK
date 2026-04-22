@@ -214,11 +214,16 @@
             runtime.setLoginUser(userData);
             runtime.setStoredUserId(userInfo.sub);
 
-            // Cognito sub(UUID) → DB int user_id 치환. login.js 와 동일 이유.
+            // Cognito sub(UUID) → DB int user_id 치환 + DB name/email/phone 동기화
+            // (login.js 와 동일 이유: id_token refresh 후 name claim 이 빠져도 localStorage 유지)
             try {
               const me = await runtime.getJson('/api/read/auth/me');
               if (me && me.user && me.user.user_id) {
-                runtime.patchLoginUser({ user_id: me.user.user_id });
+                const patch = { user_id: me.user.user_id };
+                if (me.user.name)  patch.name  = me.user.name;
+                if (me.user.email) patch.email = me.user.email;
+                if (me.user.phone) patch.phone = me.user.phone;
+                runtime.patchLoginUser(patch);
               }
             } catch (meErr) {
               console.warn('[signup] resolve DB user_id failed:', meErr);

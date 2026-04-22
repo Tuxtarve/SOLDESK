@@ -45,12 +45,15 @@ def get_mypage(request: Request):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT user_id, email, name FROM users WHERE user_id = %s",
+                "SELECT user_id, email, name, phone, created_at FROM users WHERE user_id = %s",
                 (user_id_int,),
             )
             user = cur.fetchone()
         if not user:
             return JSONResponse(status_code=404, content={"message": "user not found"})
+        # JSON 직렬화용: datetime → ISO, NULL → '' (프론트는 '-' fallback 이 있으나 일관성 유지)
+        if user.get("created_at") is not None:
+            user["created_at"] = user["created_at"].isoformat()
         return user
     finally:
         conn.close()
