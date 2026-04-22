@@ -6,6 +6,7 @@ variable "env" {
 variable "aws_region" {
   type        = string
   description = "AWS region (credentials come from ~/.aws/*)."
+  default     = "ap-northeast-2"
 }
 
 variable "db_password" {
@@ -15,7 +16,8 @@ variable "db_password" {
 
 variable "eks_cluster_name" {
   type        = string
-  description = "EKS cluster name."
+  description = "EKS cluster name. 서브넷 태그 kubernetes.io/cluster/<이 값> 과 동일해야 함."
+  default     = "ticketing-eks"
 }
 
 variable "github_repo" {
