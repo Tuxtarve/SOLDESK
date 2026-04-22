@@ -255,3 +255,40 @@ module "cloudfront" {
   # (WAF 가 먼저 삭제되면 CloudFront destroy 실패)
   depends_on = [module.waf, module.api_gateway]
 }
+
+# ── ECR repositories ──────────────────────────────────────────────────
+# modules/cicd 에도 동일 정의가 있으나, GitHub OIDC/IAM 등 다른 리소스와 묶여 있어
+# 프로덕션 배포만 필요한 지금은 ECR 만 root 에 직접 선언. setup-all.sh [9/14] 의
+# `docker push` 가 이 repo 들에 이미지를 올린다.
+resource "aws_ecr_repository" "ticketing_was" {
+  name                 = "ticketing/ticketing-was"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+  tags = { Name = "ecr-ticketing-was", Environment = var.env }
+}
+
+resource "aws_ecr_repository" "worker_svc" {
+  name                 = "ticketing/worker-svc"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+  tags = { Name = "ecr-worker-svc", Environment = var.env }
+}
+
+resource "aws_ecr_repository" "frontend" {
+  name                 = "ticketing/frontend"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+  tags = { Name = "ecr-frontend", Environment = var.env }
+}
