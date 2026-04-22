@@ -49,10 +49,12 @@ else
   fi
 fi
 
+SQS_QUEUE_NAME="${SQS_QUEUE_NAME:-ticketing-reservation.fifo}"
+
 if [ -n "${POST_APPLY_SQS_QUEUE_URL:-}" ]; then
-  SQS_URL="$POST_APPLY_SQS_QUEUE_URL"
+  SQS_QUEUE_URL="$POST_APPLY_SQS_QUEUE_URL"
 else
-  SQS_URL="$(terraform -chdir="$TF_DIR" output -raw sqs_queue_url)"
+  SQS_QUEUE_URL="$(terraform -chdir="$TF_DIR" output -raw sqs_queue_url)"
 fi
 
 # DB_READER_HOST: 단일 RDS 시 writer 와 동일. Replica 생기면 rds_reader_endpoint 로 분리.
@@ -64,8 +66,10 @@ kubectl create secret generic "$SECRET_NAME" -n "$NAMESPACE" \
   --from-literal=DB_PASSWORD="$DB_PASSWORD" \
   --from-literal=ELASTICACHE_PRIMARY_ENDPOINT="$REDIS_EP" \
   --from-literal=REDIS_HOST="$REDIS_EP" \
-  --from-literal=SQS_QUEUE_URL="$SQS_URL" \
+  --from-literal=SQS_QUEUE_NAME="$SQS_QUEUE_NAME" \
+  --from-literal=SQS_QUEUE_URL="$SQS_QUEUE_URL" \
   --dry-run=client -o yaml \
   | kubectl apply -f -
 
 echo "Applied secret: $NAMESPACE/$SECRET_NAME"
+

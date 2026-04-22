@@ -2,25 +2,25 @@ apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
 metadata:
   name: worker-svc-sqs
-  namespace: ticketing
   labels:
     app: worker-svc
+  annotations:
+    # 기본은 스케일 "비활성"(필요 시 scripts/worker-autoscale-on.sh 로 paused- 해제).
+    autoscaling.keda.sh/paused: "true"
 spec:
   scaleTargetRef:
-    name: worker-svc
-  pollingInterval: 5
-  cooldownPeriod: 300
-  minReplicaCount: 1
-  maxReplicaCount: 20
+    name: worker-svc-burst
+  # scale-out 은 유지, scale-in 은 너무 빠르면 워커·노드가 동시에 빠졌다가 큐 재적체 시 Pending 반복
+  pollingInterval: 2
+  cooldownPeriod: 180
+  # stable worker-svc 1대는 ScaledObject 밖. burst 만 0~39 (합계 최대 40).
+  minReplicaCount: 0
+  maxReplicaCount: 39
   advanced:
     horizontalPodAutoscalerConfig:
       behavior:
         scaleDown:
-          stabilizationWindowSeconds: 180
-          policies:
-            - type: Percent
-              value: 50
-              periodSeconds: 60
+          stabilizationWindowSeconds: 300
         scaleUp:
           stabilizationWindowSeconds: 0
           policies:
@@ -28,22 +28,18 @@ spec:
               value: 100
               periodSeconds: 30
             - type: Pods
-              value: 4
+              value: 10
               periodSeconds: 30
           selectPolicy: Max
   triggers:
-    # SQS 큐 길이 기반 — 예매 트래픽 본 신호
     - type: aws-sqs-queue
       authenticationRef:
         name: keda-worker-sqs-aws
       metadata:
         awsRegion: ap-northeast-2
+        # scale target(worker-svc)의 env로부터 큐 URL을 읽음(환경별/계정별 URL 차이를 안전하게 흡수)
         queueURLFromEnv: SQS_QUEUE_URL
-        queueLength: "2"
-        activationQueueLength: "1"
+        # 1메시지부터 즉시 확장(데모/버스트에서 반응성 극대화)
+        queueLength: "1"
+        activationQueueLength: "0"
         scaleOnInFlight: "true"
-    # CPU 기반 — SQS 메시지 없이 CPU 만 튀는 경우 대비 (백업 신호)
-    - type: cpu
-      metricType: Utilization
-      metadata:
-        value: "60"

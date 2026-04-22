@@ -26,21 +26,56 @@ if ! kubectl config view >/dev/null 2>&1; then
   bash "${_KS_DIR}/refresh_kubeconfig.sh"
 fi
 
+# terraform 출력으로 «이 스택에 CloudFront가 있는지»부터 고정한다 (tfvars / state 기준).
+_routing="$(terraform -chdir="$TF_DIR" output -raw frontend_routing_mode 2>/dev/null || echo "unknown")"
+_eks_tf="$(terraform -chdir="$TF_DIR" output -raw eks_cluster_name 2>/dev/null || true)"
+_kctx="$(kubectl config current-context 2>/dev/null || echo "")"
+echo "=== api-origin 동기화: terraform frontend_routing_mode=${_routing}"
+echo "    (s3_website_alb_origin_js = S3 웹사이트 + Ingress ALB를 api-origin.js에 기록)"
+echo "    (cloudfront_alb = CloudFront 동일 오리진 + api-origin.js에 CF URL)"
+echo "    (none = S3 v2 호스팅 미사용 — 아래에서 bucket 없으면 종료)"
+if [[ -n "${_eks_tf}" && -n "${_kctx}" ]] && ! grep -Fq "${_eks_tf}" <<<"${_kctx}"; then
+  echo "WARN: kubectl current-context 에 terraform eks_cluster_name(${_eks_tf})이 안 보입니다. 다른 클러스터 Ingress로 api-origin.js를 쓸 수 있습니다." >&2
+fi
+
 NAMESPACE="${TICKETING_NAMESPACE:-${TICKETING_NS:-ticketing}}"
 INGRESS_NAME="${INGRESS_NAME:-ticketing-ingress}"
 MAX_WAIT_SEC="${MAX_WAIT_SEC:-600}"
 SLEEP_SEC="${SLEEP_SEC:-5}"
 
-cf_url="$(terraform -chdir="$TF_DIR" output -raw frontend_cloudfront_url 2>/dev/null || true)"
-if [[ -n "${cf_url}" && "${cf_url}" != "null" ]]; then
-  echo "frontend_cloudfront_url 이 설정됨 — 브라우저는 동일 오리진 /api/* 를 씁니다. api-origin.js 동기화는 건너뜁니다."
-  exit 0
-fi
-
 bucket="$(terraform -chdir="$TF_DIR" output -raw frontend_bucket_name 2>/dev/null || true)"
 if [[ -z "${bucket}" || "${bucket}" == "null" ]]; then
   echo "frontend_bucket_name 없음 — S3 hosting(v2) 미적용 상태로 보고 api-origin.js 동기화를 건너뜁니다."
   exit 0
+fi
+
+tmp="$(mktemp)"
+cleanup_tmp() { rm -f "${tmp}"; }
+trap cleanup_tmp EXIT
+
+cf_url="$(terraform -chdir="$TF_DIR" output -raw frontend_cloudfront_url 2>/dev/null || true)"
+if [[ "${_routing}" == "s3_website_alb_origin_js" ]] && [[ -n "${cf_url}" && "${cf_url}" != "null" ]]; then
+  echo "WARN: terraform frontend_routing_mode 는 S3 웹사이트인데 frontend_cloudfront_url 값이 있습니다. state/tfvars 확인. ALB(Ingress) 경로로 동기화합니다." >&2
+fi
+
+# 분기는 반드시 terraform frontend_routing_mode 기준(URL 존재 여부만으로 CloudFront로 단정하지 않음).
+if [[ "${_routing}" == "cloudfront_alb" ]]; then
+  if [[ -z "${cf_url}" || "${cf_url}" == "null" ]]; then
+    echo "ERROR: terraform 이 cloudfront_alb 인데 frontend_cloudfront_url 이 없습니다. terraform apply 완료 여부를 확인하세요." >&2
+    exit 1
+  fi
+  origin="${cf_url%/}"
+  printf 'window.__TICKETING_API_ORIGIN__="%s";\n' "${origin}" >"${tmp}"
+  echo "=== CloudFront: s3://${bucket}/api-origin.js ← ${origin} (viewer가 /api/* 를 이 도메인으로 호출) ==="
+  aws s3 cp "${tmp}" "s3://${bucket}/api-origin.js" \
+    --content-type "application/javascript; charset=utf-8" \
+    --cache-control "no-store, max-age=0"
+  echo "완료. CloudFront URL로 접속한 뒤 api-origin.js 는 캐시 비활성 정책이어도 브라우저 강력 새로고침 권장."
+  exit 0
+fi
+
+if [[ "${_routing}" != "s3_website_alb_origin_js" ]]; then
+  echo "WARN: frontend_routing_mode=${_routing} — S3 웹사이트+ALB 동기화 경로가 아닙니다(none 이면 버킷만 있고 프론트 모듈 미사용일 수 있음). Ingress ALB 로 진행합니다." >&2
 fi
 
 echo "=== Ingress ${NAMESPACE}/${INGRESS_NAME} 에서 ALB 호스트 대기 (최대 ${MAX_WAIT_SEC}s) ==="
@@ -61,14 +96,11 @@ if [[ -z "${host}" ]]; then
 fi
 
 origin="http://${host}"
-tmp="$(mktemp)"
-# ALB 호스트명은 따옴표 불필요; JSON 대신 단일 설정 스크립트로만 배포
 printf 'window.__TICKETING_API_ORIGIN__="%s";\n' "${origin}" >"${tmp}"
 
-echo "=== s3://${bucket}/api-origin.js ← ${origin} ==="
+echo "=== S3 웹사이트 모드: s3://${bucket}/api-origin.js ← ${origin} ==="
 aws s3 cp "${tmp}" "s3://${bucket}/api-origin.js" \
   --content-type "application/javascript; charset=utf-8" \
   --cache-control "no-store, max-age=0"
 
-rm -f "${tmp}"
 echo "완료. 브라우저에서 S3 사이트 새로고침(api-origin.js 반영, 필요 시 캐시 비우기)."
