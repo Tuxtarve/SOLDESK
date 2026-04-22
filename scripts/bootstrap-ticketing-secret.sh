@@ -22,7 +22,9 @@ if [[ -z "${DB_PASSWORD:-}" ]]; then
 fi
 
 DB_W="$(terraform output -raw rds_writer_endpoint)"
-DB_R="$(terraform output -raw rds_reader_endpoint)"
+# 단일 RDS 구성에서는 module.rds.reader_endpoint 가 null → terraform output 이 "not found".
+# Read replica 가 생기기 전에는 writer 와 동일하게 두고, 생기면 별도 output 노출 후 교체.
+DB_R="$(terraform output -raw rds_reader_endpoint 2>/dev/null || echo "$DB_W")"
 REDIS_H="$(terraform output -raw redis_endpoint)"
 SQS_URL="$(terraform output -raw sqs_queue_url)"
 COGNITO_POOL="$(terraform output -raw cognito_user_pool_id)"
