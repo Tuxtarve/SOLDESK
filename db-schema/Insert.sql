@@ -10,11 +10,40 @@ USE ticketing;
 -- 1) 영화(1~10) + 더미(11~40) 복구
 -- =====================================================================
 
-INSERT INTO users (user_id, phone, name, created_at)
-VALUES (1, '01012341234', '홍길동', NOW())
+INSERT INTO users (user_id, phone, password_hash, name, created_at)
+VALUES (1, '01012341234', '03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4', '홍길동', NOW())
 ON DUPLICATE KEY UPDATE
   phone = VALUES(phone),
+  password_hash = VALUES(password_hash),
   name = VALUES(name);
+
+-- 더미 유저 2 ~ 50001 (총 5만명)
+-- - MySQL 5.7 호환: 루프 기반
+-- - 재실행 안전: ON DUPLICATE KEY UPDATE
+DROP PROCEDURE IF EXISTS seed_dummy_users_2_50001;
+DELIMITER $$
+CREATE PROCEDURE seed_dummy_users_2_50001()
+BEGIN
+  DECLARE i INT DEFAULT 2;
+  WHILE i <= 50001 DO
+    INSERT INTO users (user_id, phone, password_hash, name, created_at)
+    VALUES (
+      i,
+      CONCAT('010', LPAD(i, 8, '0')),
+      '03ac674216f3e15c761ee1a5e255f067953623c8b388b4459e13f978d7c846f4',
+      CONCAT('더미유저', i),
+      NOW()
+    )
+    ON DUPLICATE KEY UPDATE
+      phone = VALUES(phone),
+      password_hash = VALUES(password_hash),
+      name = VALUES(name);
+    SET i = i + 1;
+  END WHILE;
+END$$
+DELIMITER ;
+CALL seed_dummy_users_2_50001();
+DROP PROCEDURE IF EXISTS seed_dummy_users_2_50001;
 
 INSERT INTO movies (
   movie_id, title, genre, director, runtime_minutes,
@@ -309,8 +338,9 @@ WHERE NOT EXISTS (SELECT 1 FROM concerts WHERE title= 'BTS WORLD TOUR ''ARIRANG'
 SET @cid_big := (SELECT concert_id FROM concerts WHERE title= 'BTS WORLD TOUR ''ARIRANG''' ORDER BY concert_id ASC LIMIT 1);
 
 INSERT INTO concert_shows
-  (concert_id, show_date, venue_name, venue_address, hall_name, seat_rows, seat_cols, total_count, remain_count, price, status, created_at, updated_at)
+  (show_id, concert_id, show_date, venue_name, venue_address, hall_name, seat_rows, seat_cols, total_count, remain_count, price, status, created_at, updated_at)
 SELECT
+  100,
   @cid_big,
   '2026-05-10 18:00:00',
   '고양종합운동장 주경기장',
@@ -327,8 +357,6 @@ SELECT
 WHERE @cid_big IS NOT NULL
   AND NOT EXISTS (
     SELECT 1 FROM concert_shows cs
-    WHERE cs.concert_id = @cid_big
-      AND cs.show_date = '2026-05-10 18:00:00'
-      AND cs.hall_name = '스탠딩 A'
+    WHERE cs.show_id = 100
   );
 
