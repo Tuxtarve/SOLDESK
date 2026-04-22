@@ -14,17 +14,8 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: ticketing
-  # sqs-access-sa 의 IRSA role arn 은 배포자마다 계정 ID 가 달라야 하므로
-  # git 에는 PLACEHOLDER_ACCOUNT_ID 로 남기고 setup-all.sh [9.5/14] 가 로컬에서 치환한다.
-  # ArgoCD 가 이 annotation 을 revert 하지 않도록 무시 목록에 명시.
-  # JSON Pointer 에서 "/" 는 "~1" 로 escape.
-  ignoreDifferences:
-    - group: ""
-      kind: ServiceAccount
-      name: sqs-access-sa
-      namespace: ticketing
-      jsonPointers:
-        - /metadata/annotations/eks.amazonaws.com~1role-arn
+  # sqs-access-sa 는 k8s/_runtime/ 으로 이동해 ArgoCD 관리 밖에서 post_apply_k8s_bootstrap.sh
+  # 가 직접 apply. ignoreDifferences 를 쓰지 않아도 됨.
   syncPolicy:
     automated:
       prune: true

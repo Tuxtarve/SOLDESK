@@ -6,7 +6,10 @@ resources:
   - namespace.yaml
   - priorityclass-ticketing.yaml
   - configmap.yaml
-  - sqs-service-account.yaml
+  # sqs-service-account 는 ArgoCD 관리 밖(k8s/_runtime/) 으로 분리.
+  # IRSA role arn 이 배포자마다 다르기 때문에 kustomize/ArgoCD 로 git 을 단일진실원으로
+  # 두면 selfHeal/sync 가 live annotation 을 덮어 IRSA 가 파손되는 문제를 구조적으로 차단.
+  # 대신 terraform/scripts/post_apply_k8s_bootstrap.sh 가 env 치환 후 kubectl apply.
   - pdb-user-facing.yaml
   - read-api/deployment.yaml
   - read-api/deployment-burst.yaml

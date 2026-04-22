@@ -98,6 +98,29 @@ kubectl get ns "$NS" >/dev/null 2>&1 || kubectl create ns "$NS" >/dev/null
 echo "=== apply-secrets-from-terraform ==="
 NAMESPACE="$NS" bash "$REPO_ROOT/k8s/scripts/apply-secrets-from-terraform.sh"
 
+# sqs-access-sa 는 ArgoCD/Kustomize 관리 밖(k8s/_runtime/)으로 분리.
+# 배포자마다 AWS 계정 ID 가 달라 IRSA role arn 도 다르므로 git 단일진실원으로
+# 두면 selfHeal 이 live annotation 을 덮어 IRSA 가 영구 파손된다(과거 이슈).
+# 여기서 parent apply 가 주입한 AWS_ACCOUNT_ID + SQS_ACCESS_ROLE_ARN 으로 직접 적용.
+echo "=== apply sqs-access-sa (IRSA annotation 주입) ==="
+_sa_role_arn="${SQS_ACCESS_ROLE_ARN:-}"
+if [ -z "$_sa_role_arn" ] && [ -n "${AWS_ACCOUNT_ID:-}" ]; then
+  _sa_role_arn="arn:aws:eks:${AWS_REGION:-ap-northeast-2}:${AWS_ACCOUNT_ID}:role/ticketing-eks-sqs-access-role"
+fi
+if [ -z "$_sa_role_arn" ]; then
+  echo "ERROR: SQS_ACCESS_ROLE_ARN 미주입 — IRSA SA 생성 불가" >&2
+  exit 1
+fi
+kubectl -n "$NS" apply -f - <<EOF
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: sqs-access-sa
+  namespace: $NS
+  annotations:
+    eks.amazonaws.com/role-arn: "$_sa_role_arn"
+EOF
+
 echo "=== kubectl apply -k (rendered) ==="
 
 # parent apply 가 주입한 env 우선 (Windows state lock 회피). 없으면 terraform output fallback.
