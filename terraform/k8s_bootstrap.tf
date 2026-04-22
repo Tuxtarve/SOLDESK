@@ -36,8 +36,11 @@ resource "null_resource" "k8s_bootstrap_after_apply" {
   provisioner "local-exec" {
     interpreter = ["bash", "-c"]
     environment = {
-      REPO_ROOT   = abspath("${path.root}/..")
-      DB_PASSWORD = var.db_password
+      REPO_ROOT = abspath("${path.root}/..")
+      # NOTE: DB_PASSWORD 는 env 블록에 넣지 않는다. sensitive=true var 하나라도 environment 에 있으면
+      # Terraform 이 provisioner 의 stdout/stderr 를 전부 "output suppressed" 로 가려서
+      # 디버깅이 불가능해진다. setup-all.sh 가 `export DB_PASSWORD=...` 로 부모 shell 에
+      # 등록하면 `terraform apply` 의 자식 프로세스(bash)가 그대로 상속받는다.
       # 같은 apply 중 nested `terraform output`은 state 락·sensitive 출력 때문에 실패할 수 있음 → 모듈 값 직접 전달
       POST_APPLY_RDS_WRITER_ENDPOINT    = nonsensitive(module.rds.writer_endpoint)
       POST_APPLY_REDIS_PRIMARY_ENDPOINT = nonsensitive(module.elasticache.redis_endpoint)
