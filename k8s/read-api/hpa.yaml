@@ -3,42 +3,44 @@ kind: HorizontalPodAutoscaler
 metadata:
   name: read-api-hpa
   namespace: ticketing
-  labels:
-    app: read-api
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
-    name: read-api
+    name: read-api-burst
+  # stable read-api 1대는 HPA 밖. burst 만 1~23 (합계 최대 24).
+  # maxReplicas 만큼 Running 하려면 노드·allocatable 이 따라와야 함 — eks_app_node_max_size·파드 requests 와 정합.
+  # 이 클러스터는 Resource metric(HPA)로 scale-to-zero(min=0)를 허용하지 않음.
   minReplicas: 1
-  maxReplicas: 20
+  maxReplicas: 23
   metrics:
     - type: Resource
       resource:
         name: cpu
         target:
           type: Utilization
-          averageUtilization: 65
+          averageUtilization: 55
     - type: Resource
       resource:
         name: memory
         target:
           type: Utilization
-          averageUtilization: 75
+          averageUtilization: 70
   behavior:
-    scaleDown:
-      stabilizationWindowSeconds: 180
-      policies:
-        - type: Percent
-          value: 50
-          periodSeconds: 60
     scaleUp:
       stabilizationWindowSeconds: 0
       policies:
         - type: Percent
           value: 100
-          periodSeconds: 30
+          periodSeconds: 15
         - type: Pods
-          value: 2
-          periodSeconds: 30
+          value: 6
+          periodSeconds: 15
       selectPolicy: Max
+    scaleDown:
+      # 급격한 scale-in 은 노드·레플리카가 한꺼번에 줄며 짧은 재버스트에 Pending/NotReady 를 유발하기 쉬움
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 25
+          periodSeconds: 90
