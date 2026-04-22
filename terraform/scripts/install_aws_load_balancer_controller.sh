@@ -43,3 +43,23 @@ helm upgrade --install aws-load-balancer-controller eks/aws-load-balancer-contro
   --set serviceAccount.name=aws-load-balancer-controller \
   --set "serviceAccount.annotations.eks\\.amazonaws\\.com/role-arn=${ROLE_ARN}"
 
+# helm_release 완료 ≠ Controller Pod/Webhook Ready.
+# 후속 helm_release(예: KEDA) 가 Service 를 만들면 ALB Controller 의 mutating
+# webhook "mservice.elbv2.k8s.aws" 가 가로채는데, endpoint 가 아직 올라오지 않으면
+# "no endpoints available for service aws-load-balancer-webhook-service" 로
+# 후속 apply 가 터진다. Deployment Available + Service endpoint 둘 다 대기해 경쟁조건 제거.
+echo "waiting aws-load-balancer-controller rollout..."
+kubectl -n kube-system rollout status deployment/aws-load-balancer-controller --timeout=300s
+kubectl -n kube-system wait --for=condition=Available deployment/aws-load-balancer-controller --timeout=180s
+for i in $(seq 1 60); do
+  ip="$(kubectl -n kube-system get endpoints aws-load-balancer-webhook-service -o jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)"
+  if [ -n "$ip" ]; then
+    echo "aws-load-balancer-webhook-service endpoint ready ($ip)"
+    exit 0
+  fi
+  sleep 2
+done
+echo "ERROR: aws-load-balancer-webhook-service endpoint not ready in 120s" >&2
+kubectl -n kube-system get pods,deploy,endpoints -l app.kubernetes.io/name=aws-load-balancer-controller >&2 || true
+exit 1
+
