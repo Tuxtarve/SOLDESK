@@ -206,6 +206,49 @@ resource "aws_eks_addon" "metrics_server" {
   depends_on = [aws_eks_node_group.app]
 }
 
+# ── EBS CSI Driver ─────────────────────────────────────────────────────
+# kube-prometheus-stack(Grafana/Prometheus PVC), 기타 stateful 워크로드의 gp3 PVC 프로비저닝에 필요.
+# 없으면 StorageClass gp3(ebs.csi.aws.com)가 "WaitForFirstConsumer → 영구 Pending" 으로 남아
+# Pod 가 `VolumeBinding: context deadline exceeded` 로 스케줄 실패.
+# 형 eks 모듈에는 없음 → 내 FINAL(2f0053a) 에서 복구.
+resource "aws_iam_role" "ebs_csi" {
+  name = "${local.name_prefix}-ebs-csi-driver-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Principal = {
+        Federated = aws_iam_openid_connect_provider.eks.arn
+      }
+      Action = "sts:AssumeRoleWithWebIdentity"
+      Condition = {
+        StringEquals = {
+          "${local.oidc_issuer}:sub" = "system:serviceaccount:kube-system:ebs-csi-controller-sa"
+          "${local.oidc_issuer}:aud" = "sts.amazonaws.com"
+        }
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "ebs_csi" {
+  role       = aws_iam_role.ebs_csi.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonEBSCSIDriverPolicy"
+}
+
+resource "aws_eks_addon" "ebs_csi" {
+  cluster_name                = aws_eks_cluster.main.name
+  addon_name                  = "aws-ebs-csi-driver"
+  service_account_role_arn    = aws_iam_role.ebs_csi.arn
+  resolve_conflicts_on_create = "OVERWRITE"
+  resolve_conflicts_on_update = "OVERWRITE"
+
+  depends_on = [
+    aws_eks_node_group.app,
+    aws_iam_role_policy_attachment.ebs_csi,
+  ]
+}
+
 # ALB Controller IAM (Ingress 자동 생성용)
 resource "aws_iam_policy" "alb_controller" {
   name   = "${local.name_prefix}-alb-controller-policy"
