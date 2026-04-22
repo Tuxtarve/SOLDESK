@@ -129,7 +129,7 @@ COGNITO_APP_CLIENT_ID = os.getenv("COGNITO_APP_CLIENT_ID", "").strip()
 
 # ── SQS ──────────────────────────────────────────────────────────────────────
 AWS_REGION    = os.getenv("AWS_REGION", "")
-SQS_QUEUE_URL = os.getenv("SQS_QUEUE_URL", "")
+SQS_QUEUE_NAME = os.getenv("SQS_QUEUE_NAME", "ticketing-reservation.fifo").strip()
 # 스위치: false면 SQS 호출 자체를 차단한다.
 # NOTE: 현재 write-api는 SQS 동기 폴백(DB 직접 커밋)이 제거된 상태라,
 # SQS_ENABLED=false에서 예매 커밋을 "DB로 즉시" 돌리려면 동기 커밋 경로를 복원해야 한다.
@@ -150,7 +150,7 @@ BOOKING_QUEUE_COUNTER_TTL_SEC = _get_int_env("BOOKING_QUEUE_COUNTER_TTL_SEC", BO
 
 # SQS 예매를 켠 경우 예매 상태(booking:*) ElastiCache는 필수 — worker·write-api 불일치 방지로 자동 True.
 BOOKING_STATE_ENABLED = _get_bool_env("BOOKING_STATE_ENABLED", True)
-if SQS_ENABLED and str(SQS_QUEUE_URL or "").strip():
+if SQS_ENABLED and str(SQS_QUEUE_NAME or "").strip():
     BOOKING_STATE_ENABLED = True
 
 # ── Waiting Room (입장 대기열) ────────────────────────────────────────────────

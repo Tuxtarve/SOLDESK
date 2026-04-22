@@ -34,15 +34,85 @@ from config import (
     BOOKING_QUEUED_TTL_SEC,
     BOOKING_STATE_ENABLED,
     BOOKING_QUEUE_COUNTER_TTL_SEC,
+    DB_HOST,
+    DB_NAME,
+    DB_PASSWORD,
+    DB_PORT,
+    DB_USER,
     SQS_BOTO_MAX_ATTEMPTS,
     SQS_BOTO_RETRY_MODE,
     SQS_CONNECT_TIMEOUT_SEC,
     SQS_ENABLED,
-    SQS_QUEUE_URL,
+    SQS_QUEUE_NAME,
     SQS_READ_TIMEOUT_SEC,
 )
 
 log = logging.getLogger("sqs_client")
+
+
+def _db_lookup_concert_booking_by_ref(booking_ref: str) -> dict | None:
+    """
+    Redis(booking:*)가 비어도 DB에 이미 커밋된 예약이 있으면 status 폴링에서 OK를 복구한다.
+    - 콘서트만: concert_booking.sqs_booking_ref 유니크 인덱스가 있음.
+    - 목적: "예약은 됐는데 UI는 UNKNOWN_OR_EXPIRED/연결오류" 케이스 완화.
+    """
+    ref = str(booking_ref or "").strip()
+    if not ref:
+        return None
+    try:
+        import pymysql
+
+        conn = pymysql.connect(
+            host=DB_HOST,
+            port=int(DB_PORT),
+            user=DB_USER,
+            password=DB_PASSWORD,
+            database=DB_NAME,
+            charset="utf8mb4",
+            cursorclass=pymysql.cursors.DictCursor,
+            autocommit=True,
+        )
+    except Exception:
+        return None
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT booking_id, booking_code, show_id "
+                "FROM concert_booking "
+                "WHERE sqs_booking_ref = %s LIMIT 1",
+                (ref,),
+            )
+            row = cur.fetchone()
+            if not row:
+                return None
+            booking_id = int(row.get("booking_id") or 0)
+            booking_code = str(row.get("booking_code") or "")
+            show_id = int(row.get("show_id") or 0)
+            cur.execute(
+                "SELECT payment_id FROM concert_payment WHERE booking_id = %s LIMIT 1",
+                (booking_id,),
+            )
+            pr = cur.fetchone()
+            payment_id = int(pr.get("payment_id") or 0) if pr else 0
+        return {
+            "ok": True,
+            "code": "OK",
+            "booking_id": booking_id,
+            "booking_code": booking_code,
+            "payment_id": payment_id,
+            "booking_ref": ref,
+            # queue 연출용이 아니라 최종 결과 복구용이므로 최소 필드만 채운다.
+            "recovered_from_db": True,
+            "show_id": show_id,
+        }
+    except Exception:
+        return None
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
 
 def _boto_config() -> Config:
@@ -56,11 +126,19 @@ def _boto_config() -> Config:
     )
 
 
-sqs = (
-    boto3.client("sqs", region_name=AWS_REGION, config=_boto_config())
-    if (SQS_ENABLED and SQS_QUEUE_URL)
-    else None
-)
+_sqs_client = boto3.client("sqs", region_name=AWS_REGION, config=_boto_config()) if SQS_ENABLED else None
+
+
+def _resolve_queue_url() -> str:
+    if not SQS_ENABLED:
+        raise RuntimeError("SQS is disabled (SQS_ENABLED=false). No sync DB fallback is configured.")
+    if not _sqs_client:
+        raise RuntimeError("SQS client is not initialized")
+    qname = str(SQS_QUEUE_NAME or "").strip()
+    if not qname:
+        raise RuntimeError("SQS_QUEUE_NAME is required when SQS is enabled")
+    resp = _sqs_client.get_queue_url(QueueName=qname)
+    return str(resp.get("QueueUrl") or "").strip()
 
 
 def _booking_result_key(booking_ref: str) -> str:
@@ -145,8 +223,7 @@ def send_booking_message(
 
     if not SQS_ENABLED:
         raise RuntimeError("SQS is disabled (SQS_ENABLED=false). No sync DB fallback is configured.")
-    if not sqs or not SQS_QUEUE_URL:
-        raise RuntimeError("SQS_QUEUE_URL is required when SQS is enabled")
+    queue_url = _resolve_queue_url()
 
     entity_id = _entity_id_from_payload(booking_type, payload or {})
     seq: int | None = None
@@ -169,8 +246,8 @@ def send_booking_message(
             # 순번은 UX용(대기열 연출)이라 실패해도 예매 자체는 진행한다.
             log.exception("queue enq counter incr 실패 (무시) type=%s entity_id=%s", booking_type, entity_id)
 
-    sqs.send_message(
-        QueueUrl=SQS_QUEUE_URL,
+    _sqs_client.send_message(
+        QueueUrl=queue_url,
         MessageGroupId=str(group_id),
         MessageDeduplicationId=dedup_id,
         MessageBody=raw,
@@ -249,6 +326,11 @@ def get_booking_status_dict(booking_ref: str) -> dict:
                 return {"status": "PROCESSING", "booking_ref": ref}
         except Exception:
             log.exception("booking queued 조회 실패 ref=%s", ref)
+
+    # Redis 상태 키가 비었더라도, DB에 이미 커밋된 예약이 있으면 OK로 복구(콘서트 한정).
+    recovered = _db_lookup_concert_booking_by_ref(ref)
+    if recovered is not None:
+        return recovered
 
     return {
         "status": "UNKNOWN_OR_EXPIRED",
