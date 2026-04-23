@@ -191,12 +191,17 @@ echo "kubeconfig 설정 완료"
 kubectl scale deployment coredns -n kube-system --replicas=1 2>/dev/null || true
 kubectl scale deployment ebs-csi-controller -n kube-system --replicas=1 2>/dev/null || true
 
-# ── 3. AWS Load Balancer Controller 설치 ──
+# ── 3. AWS Load Balancer Controller ──
+# terraform/alb-controller-helm.tf (null_resource) 가 [1/14] terraform apply 단계에서
+# 이미 helm upgrade --install + webhook endpoint 대기까지 수행하므로 여기서 별도 호출 X.
+# 과거엔 이 단계에서 한 번 더 install 을 시도했는데, helm release 가 이미 있어
+# "이미 설치됨 → upgrade" 경로로 빠지면서 webhook config 만 강제 삭제하고
+# controller pod 는 재시작되지 않아 self-signed cert 와 새 caBundle 이 어긋나
+# webhook cert 검증이 매번 실패했다. 중복 단계 제거.
 echo ""
 echo "=========================================="
-echo " [3/14] AWS Load Balancer Controller 설치"
+echo " [3/14] AWS Load Balancer Controller (terraform apply 에서 이미 설치됨 — skip)"
 echo "=========================================="
-bash "$SCRIPTS/install-aws-load-balancer-controller.sh"
 
 # ── 4. Cluster Autoscaler 설치 ──
 echo ""
