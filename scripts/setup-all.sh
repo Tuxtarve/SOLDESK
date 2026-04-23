@@ -7,12 +7,21 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SCRIPTS="$ROOT/scripts"
 TF_DIR="$ROOT/terraform"
+
+# ── 0. .env.local 자동 source (prepare.sh 가 생성) ──
+# DB_PASSWORD / TF_VAR_db_password 를 매 세션마다 export 하지 않아도 되게 함.
+if [[ -f "$ROOT/.env.local" ]]; then
+  # shellcheck disable=SC1091
+  source "$ROOT/.env.local"
+fi
+
 cd "$TF_DIR"
 
 # ── 0. DB_PASSWORD 확인 ──
 if [[ -z "${DB_PASSWORD:-}" ]]; then
-  echo "ERROR: DB_PASSWORD 환경변수를 먼저 설정하세요." >&2
-  echo "  export DB_PASSWORD='your-password'" >&2
+  echo "ERROR: DB_PASSWORD 환경변수가 비었습니다." >&2
+  echo "  → 'bash scripts/prepare.sh' 를 먼저 실행하거나" >&2
+  echo "    수동으로: export DB_PASSWORD='your-password'" >&2
   exit 1
 fi
 
@@ -292,16 +301,21 @@ echo "=========================================="
 echo " [9.5/14] PLACEHOLDER_ACCOUNT_ID → ${ACCOUNT_ID} 자동 치환"
 echo "=========================================="
 PLACEHOLDER_FILES=(
-  "k8s/kustomization.yaml"        # ECR 이미지 registry
-  "k8s/sqs-service-account.yaml"  # KEDA IRSA role ARN
+  "k8s/kustomization.yaml"                 # ECR 이미지 registry
+  "k8s/_runtime/sqs-service-account.yaml"  # KEDA IRSA role ARN (ArgoCD 관리 밖)
 )
 CHANGED_FILES=()
 for REL in "${PLACEHOLDER_FILES[@]}"; do
   FULL="$ROOT/$REL"
   [[ -f "$FULL" ]] || { echo "WARN: $REL 없음 — 건너뜀" >&2; continue; }
-  # 임시파일 경유 (macOS/Linux/Git Bash 모두 sed -i 호환성 회피)
+  # 두 패턴 모두 커버:
+  #   1) PLACEHOLDER_ACCOUNT_ID         (git 원본)
+  #   2) 이전 배포자의 12자리 AWS 계정 ID (다른 사람이 substitute 한 상태를 fork 뜬 경우)
+  # 결과: ECR registry / IRSA role ARN 둘 다 현재 ACCOUNT_ID 로 고정.
   TMP="$(mktemp)"
-  sed "s|PLACEHOLDER_ACCOUNT_ID|${ACCOUNT_ID}|g" "$FULL" > "$TMP"
+  # sed 구분자는 # (regex 내 | 는 alternation 이므로 outer 구분자와 충돌 금지).
+  sed -E "s#(PLACEHOLDER_ACCOUNT_ID|[0-9]{12})(\.dkr\.ecr\.)#${ACCOUNT_ID}\2#g;
+          s#(arn:aws:iam::)(PLACEHOLDER_ACCOUNT_ID|[0-9]{12})(:)#\1${ACCOUNT_ID}\3#g" "$FULL" > "$TMP"
   if ! cmp -s "$TMP" "$FULL"; then
     mv "$TMP" "$FULL"
     CHANGED_FILES+=("$REL")
@@ -313,12 +327,24 @@ done
 if [[ ${#CHANGED_FILES[@]} -eq 0 ]]; then
   echo "placeholder 이미 본인 계정(${ACCOUNT_ID}) 으로 치환됨 — skip"
 else
-  echo "치환된 파일(로컬 working tree 만): ${CHANGED_FILES[*]}"
-  # NOTE: 과거엔 여기서 git add/commit/push 를 자동 수행했으나 제거.
-  # - 팀원이 내 레포를 clone → setup-all.sh 실행 시 팀원 git push 권한 없어 스크립트가 fail 하던 문제 차단.
-  # - 본인 실행 시에도 "계정 ID 박힌 manifest" 가 원본 레포에 자동 올라가 팀원이 pull 받는 일 방지.
-  # 로컬 kubectl apply 는 이후 post_apply_k8s_bootstrap.sh / ArgoCD 경로가 수행하므로 배포는 지속됨.
-  # ArgoCD auto-sync 를 쓰는 경우에만, 본인이 직접 원하는 브랜치에 커밋·푸시 할 것.
+  echo "치환된 파일: ${CHANGED_FILES[*]}"
+  # kustomization.yaml 은 ArgoCD 가 git 에서 직접 읽으므로 원격(본인 fork) 에 push 필수.
+  # _runtime/ 파일들은 ArgoCD 관리 밖이지만 일관성을 위해 같이 커밋.
+  (
+    cd "$ROOT"
+    git add "${CHANGED_FILES[@]}"
+    if ! git diff --cached --quiet; then
+      git commit -m "chore: substitute PLACEHOLDER_ACCOUNT_ID → ${ACCOUNT_ID}" >/dev/null
+      BRANCH=$(git rev-parse --abbrev-ref HEAD)
+      if git push origin "$BRANCH" 2>&1; then
+        echo "  origin/$BRANCH 로 push 완료 → ArgoCD 가 이 값을 읽음"
+      else
+        echo "  WARN: git push 실패. 본인 fork 인지 확인 후 수동 push:" >&2
+        echo "        git push origin $BRANCH" >&2
+        echo "  ArgoCD 가 PLACEHOLDER 를 읽어 ImagePullBackOff 발생할 수 있음." >&2
+      fi
+    fi
+  )
 fi
 
 # ── 10. ArgoCD 설치 + ticketing Application 등록 ──
@@ -337,16 +363,18 @@ echo "=========================================="
 echo " [11/14] ArgoCD Application Synced 대기"
 echo "=========================================="
 echo "ticketing Application 상태 폴링 (최대 10분)..."
+# ArgoCD 'Suspended' 는 의도된 paused 상태 (KEDA ScaledObject 가 paused-replicas annotation 을
+# 갖고 있으면 발생). Deploy 자체는 성공이므로 Healthy/Suspended 둘 다 종료 조건.
 for i in $(seq 1 60); do
   SYNC=$(kubectl get application ticketing -n argocd -o jsonpath='{.status.sync.status}' 2>/dev/null || echo "Unknown")
   HEALTH=$(kubectl get application ticketing -n argocd -o jsonpath='{.status.health.status}' 2>/dev/null || echo "Unknown")
-  if [[ "$SYNC" == "Synced" && "$HEALTH" == "Healthy" ]]; then
-    echo "  Synced+Healthy 달성 ($((i*10))s)"
+  if [[ "$SYNC" == "Synced" && ( "$HEALTH" == "Healthy" || "$HEALTH" == "Suspended" ) ]]; then
+    echo "  Synced+${HEALTH} 달성 ($((i*10))s)"
     break
   fi
   echo "  [$((i*10))s] sync=$SYNC health=$HEALTH"
   if [[ "$i" -eq 60 ]]; then
-    echo "WARNING: 10분 내 Synced+Healthy 안 됨. ArgoCD UI에서 확인 필요." >&2
+    echo "WARNING: 10분 내 Synced+Healthy/Suspended 안 됨. ArgoCD UI에서 확인 필요." >&2
     kubectl get application ticketing -n argocd -o jsonpath='{.status.conditions}' >&2 || true
     echo "" >&2
   fi

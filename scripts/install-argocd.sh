@@ -57,11 +57,18 @@ dex:
   enabled: false
 EOF
 
+# DNS/API 서버 연결 안정화 대기 (Git Bash 환경에서 간헐적 EKS endpoint DNS lookup 실패 방지)
+for i in $(seq 1 12); do
+  if kubectl get ns >/dev/null 2>&1; then break; fi
+  echo "  kubectl 응답 대기 중... ($i/12)"
+  sleep 5
+done
+
 if helm list -n "$NAMESPACE" 2>/dev/null | grep -q "^${RELEASE}\b"; then
   echo "이미 설치됨 → upgrade"
   helm upgrade "$RELEASE" argo/argo-cd -n "$NAMESPACE" -f "$VALUES" --wait
 else
-  kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply -f -
+  kubectl create namespace "$NAMESPACE" --dry-run=client -o yaml | kubectl apply --validate=false -f -
   helm install "$RELEASE" argo/argo-cd -n "$NAMESPACE" -f "$VALUES" --wait
 fi
 
